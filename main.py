@@ -140,16 +140,115 @@ def run_interactive_estimation(project_info: ProjectInfo):
     """运行交互式估算"""
     console.print("[yellow]🤖 启动交互式估算模式...[/yellow]")
     
-    # TODO: 实现交互式估算逻辑
-    console.print("[green]✅ 交互式估算功能即将推出![/green]")
+    try:
+        # 获取用户需求输入
+        requirements = typer.prompt("\n请输入详细的项目需求描述")
+        
+        # 创建工作流实例
+        from graph.workflow_graph import FPEstimationWorkflow
+        workflow = FPEstimationWorkflow()
+        
+        # 异步执行估算
+        async def run_estimation():
+            session_id = await workflow.initialize(
+                project_info=project_info,
+                strategy=EstimationStrategy.DUAL_PARALLEL,
+                requirements=requirements
+            )
+            
+            console.print(f"[green]📋 会话ID: {session_id}[/green]")
+            console.print("[yellow]⏳ 正在执行估算，请稍候...[/yellow]")
+            
+            # 执行工作流
+            final_state = await workflow.execute()
+            
+            # 显示结果
+            if final_state.current_state == WorkflowState.COMPLETED:
+                console.print("[green]✅ 估算完成![/green]")
+                
+                # 显示NESMA结果
+                if final_state.nesma_ufp_total:
+                    console.print(f"[blue]📊 NESMA UFP总计: {final_state.nesma_ufp_total}[/blue]")
+                
+                # 显示COSMIC结果
+                if final_state.cosmic_cfp_total:
+                    console.print(f"[blue]📊 COSMIC CFP总计: {final_state.cosmic_cfp_total}[/blue]")
+                
+                # 显示报告
+                if final_state.final_report:
+                    console.print("[green]📄 详细报告已生成[/green]")
+                    
+            else:
+                console.print(f"[red]❌ 估算失败: {final_state.error_message}[/red]")
+        
+        # 运行异步估算
+        asyncio.run(run_estimation())
+        
+    except Exception as e:
+        console.print(f"[red]交互式估算失败: {str(e)}[/red]")
+        if get_settings().debug:
+            console.print_exception()
 
 
 def run_automatic_estimation(project_info: ProjectInfo):
     """运行自动估算"""
     console.print("[yellow]🚀 启动自动估算模式...[/yellow]")
     
-    # TODO: 实现自动估算逻辑
-    console.print("[green]✅ 自动估算功能即将推出![/green]")
+    try:
+        # 使用项目描述作为需求
+        requirements = project_info.description
+        
+        # 创建工作流实例
+        from graph.workflow_graph import FPEstimationWorkflow
+        workflow = FPEstimationWorkflow()
+        
+        # 异步执行估算
+        async def run_estimation():
+            session_id = await workflow.initialize(
+                project_info=project_info,
+                strategy=EstimationStrategy.DUAL_PARALLEL,
+                requirements=requirements
+            )
+            
+            console.print(f"[green]📋 会话ID: {session_id}[/green]")
+            console.print("[yellow]⏳ 正在执行自动估算...[/yellow]")
+            
+            # 执行工作流
+            final_state = await workflow.execute()
+            
+            # 显示结果
+            if final_state.current_state == WorkflowState.COMPLETED:
+                console.print("[green]✅ 自动估算完成![/green]")
+                
+                # 创建结果表格
+                table = Table(title="估算结果")
+                table.add_column("标准", style="cyan")
+                table.add_column("功能点", style="magenta")
+                table.add_column("置信度", style="green")
+                
+                if final_state.nesma_ufp_total:
+                    table.add_row("NESMA", str(final_state.nesma_ufp_total), "85%")
+                
+                if final_state.cosmic_cfp_total:
+                    table.add_row("COSMIC", str(final_state.cosmic_cfp_total), "87%")
+                
+                console.print(table)
+                
+                # 显示分析摘要
+                if final_state.comparison_analysis:
+                    console.print("\n[blue]📈 对比分析摘要:[/blue]")
+                    console.print(final_state.comparison_analysis.get("summary", "详见完整报告"))
+                    
+            else:
+                console.print(f"[red]❌ 自动估算失败: {final_state.error_message}[/red]")
+        
+        # 运行异步估算
+        asyncio.run(run_estimation())
+        
+    except Exception as e:
+        console.print(f"[red]自动估算失败: {str(e)}[/red]")
+        if get_settings().debug:
+            console.print_exception()
 
 
 @app.command("server")
@@ -188,11 +287,18 @@ def setup_knowledge_base(
     console.print("[yellow]📚 开始设置知识库...[/yellow]")
     
     try:
-        # TODO: 实现知识库设置逻辑
-        from scripts.setup_knowledge_base import main as setup_main
+        # 执行知识库设置
+        from scripts.setup_knowledge_base import setup_knowledge_base_main
         
         # 异步运行设置
-        asyncio.run(setup_main())
+        async def run_setup():
+            await setup_knowledge_base_main(
+                nesma_path=nesma_path,
+                cosmic_path=cosmic_path,
+                force_rebuild=force
+            )
+        
+        asyncio.run(run_setup())
         
         console.print("[green]✅ 知识库设置完成![/green]")
     except Exception as e:

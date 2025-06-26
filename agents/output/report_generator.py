@@ -17,7 +17,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from agents.base.base_agent import SpecializedAgent
 from models.project_models import ProjectInfo, EstimationStrategy
-from models.nesma_models import NESMAFunctionClassification, ComplexityLevel
+from models.nesma_models import NESMAFunctionClassification, NESMAComplexityLevel
 from models.cosmic_models import COSMICDataMovement, COSMICFunctionalUser
 from models.common_models import ConfidenceLevel
 from config.settings import get_settings

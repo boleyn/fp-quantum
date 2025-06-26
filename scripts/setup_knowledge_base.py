@@ -1,279 +1,406 @@
 #!/usr/bin/env python3
 """
-量子智能化功能点估算系统 - 知识库初始化脚本
-
-整合文档加载、向量化、存储的完整知识库设置流程
+知识库初始化脚本 - 基于现有标准文档
+针对已有的NESMA和COSMIC文档进行优化处理
 """
 
 import asyncio
-import sys
-from pathlib import Path
-from typing import Dict, List
 import logging
-
-# 添加项目根目录到路径
-sys.path.append(str(Path(__file__).parent.parent))
-
-from knowledge_base.loaders.pdf_loader import load_knowledge_base_pdfs
-from knowledge_base.vector_stores.mongodb_atlas import setup_mongodb_vector_stores
-from knowledge_base.embeddings.embedding_models import get_default_embedding_model, test_embedding_model
-from config.settings import get_settings
+from pathlib import Path
+from typing import List, Dict, Any
+import os
+from datetime import datetime
 
 # 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-
-async def check_prerequisites():
-    """检查前置条件"""
-    print("🔍 检查前置条件...")
+class KnowledgeBaseBuilder:
+    """知识库构建器"""
     
-    settings = get_settings()
-    
-    # 检查必要的配置
-    checks = {
-        "MongoDB连接": bool(settings.database.mongodb_url),
-        "嵌入模型API": bool(settings.llm.bge_m3_api_key or settings.llm.openai_api_key),
-        "NESMA文档目录": settings.knowledge_base.nesma_docs_path.exists(),
-        "COSMIC文档目录": settings.knowledge_base.cosmic_docs_path.exists(),
-        "通用文档目录": settings.knowledge_base.common_docs_path.exists()
-    }
-    
-    all_passed = True
-    for check_name, passed in checks.items():
-        status = "✅" if passed else "❌"
-        print(f"  {status} {check_name}")
-        if not passed:
-            all_passed = False
-    
-    if not all_passed:
-        print("\n⚠️ 部分前置条件不满足，但仍可以继续...")
+    def __init__(self, base_dir: str = "knowledge_base"):
+        self.base_dir = Path(base_dir)
+        self.documents_dir = self.base_dir / "documents"
         
-    # 测试嵌入模型
-    print("\n🧪 测试嵌入模型...")
-    model_working = await test_embedding_model()
-    if not model_working:
-        print("❌ 嵌入模型测试失败，请检查API配置")
-        return False
+        # 文档映射
+        self.document_mapping = {
+            "nesma": {
+                "NESMA_FPA_Method_v2.3.pdf": {
+                    "title": "NESMA功能点分析方法v2.3",
+                    "type": "official_standard",
+                    "language": "英文",
+                    "priority": "high",
+                    "description": "NESMA官方功能点估算标准文档"
+                }
+            },
+            "cosmic": {
+                "COSMIC度量手册V5.0-part-1-原则、定义与规则.pdf": {
+                    "title": "COSMIC度量手册-原则与规则",
+                    "type": "official_standard",
+                    "language": "中文",
+                    "priority": "high",
+                    "description": "COSMIC v5.0核心理论和定义"
+                },
+                "COSMIC度量手册V5.0-part-2-指南.pdf": {
+                    "title": "COSMIC度量手册-实施指南",
+                    "type": "implementation_guide",
+                    "language": "中文", 
+                    "priority": "high",
+                    "description": "COSMIC v5.0实施操作指南"
+                },
+                "COSMIC度量手册V5.0-part-3-案例.pdf": {
+                    "title": "COSMIC度量手册-案例集",
+                    "type": "case_studies",
+                    "language": "中文",
+                    "priority": "medium",
+                    "description": "COSMIC v5.0实际应用案例"
+                },
+                "COSMIC早期软件规模度量指南-实践级-Early-Software-Sizing（Practitioners.pdf": {
+                    "title": "COSMIC早期估算-实践级",
+                    "type": "early_sizing_guide",
+                    "language": "中文",
+                    "priority": "medium",
+                    "description": "早期阶段功能点估算实践指南"
+                },
+                "COSMIC早期软件规模度量指南-–-专家级V2-Early-Software-Sizing（Experts.pdf": {
+                    "title": "COSMIC早期估算-专家级",
+                    "type": "advanced_guide",
+                    "language": "中文",
+                    "priority": "medium",
+                    "description": "高级早期功能点估算指南"
+                }
+            },
+            "common": {
+                "NESMA_FPA_Method_v2.3.pdf": {
+                    "title": "NESMA参考文档",
+                    "type": "reference",
+                    "language": "英文",
+                    "priority": "medium",
+                    "description": "通用NESMA参考文档"
+                },
+                "工作量拆分讲解V2.pptx": {
+                    "title": "工作量拆分培训",
+                    "type": "training_material",
+                    "language": "中文",
+                    "priority": "medium",
+                    "description": "功能点工作量拆分培训材料"
+                }
+            }
+        }
     
-    return True
-
-
-async def create_document_directories():
-    """创建文档目录"""
-    print("📁 确保文档目录存在...")
-    
-    settings = get_settings()
-    directories = [
-        settings.knowledge_base.nesma_docs_path,
-        settings.knowledge_base.cosmic_docs_path,
-        settings.knowledge_base.common_docs_path
-    ]
-    
-    for directory in directories:
-        directory.mkdir(parents=True, exist_ok=True)
-        print(f"  ✅ {directory}")
-
-
-async def load_and_process_documents():
-    """加载和处理文档"""
-    print("📚 加载知识库文档...")
-    
-    try:
-        documents_by_type = await load_knowledge_base_pdfs()
+    def analyze_existing_documents(self) -> Dict[str, Any]:
+        """分析现有文档"""
         
-        total_docs = sum(len(docs) for docs in documents_by_type.values())
-        print(f"\n📊 文档加载完成，总计 {total_docs} 个文档块:")
+        logger.info("🔍 分析现有文档资源...")
         
-        for source_type, docs in documents_by_type.items():
-            print(f"  {source_type.upper()}: {len(docs)} 个文档块")
+        analysis = {
+            "total_documents": 0,
+            "by_category": {},
+            "by_language": {"中文": 0, "英文": 0},
+            "by_priority": {"high": 0, "medium": 0, "low": 0},
+            "missing_files": [],
+            "processing_plan": []
+        }
+        
+        for category, docs in self.document_mapping.items():
+            category_path = self.documents_dir / category
+            category_info = {
+                "found": 0,
+                "missing": 0,
+                "files": []
+            }
             
-            # 显示示例文档
-            if docs:
-                sample_doc = docs[0]
-                print(f"    示例: {sample_doc.metadata.get('file_name', 'unknown')}")
-                print(f"    内容预览: {sample_doc.page_content[:100]}...")
+            for filename, metadata in docs.items():
+                file_path = category_path / filename
+                if file_path.exists():
+                    category_info["found"] += 1
+                    category_info["files"].append({
+                        "filename": filename,
+                        "size": f"{file_path.stat().st_size / 1024 / 1024:.1f}MB",
+                        "metadata": metadata
+                    })
+                    
+                    # 统计
+                    analysis["total_documents"] += 1
+                    analysis["by_language"][metadata["language"]] += 1
+                    analysis["by_priority"][metadata["priority"]] += 1
+                    
+                else:
+                    category_info["missing"] += 1
+                    analysis["missing_files"].append(f"{category}/{filename}")
+            
+            analysis["by_category"][category] = category_info
         
-        return documents_by_type
-        
-    except Exception as e:
-        logger.error(f"❌ 文档加载失败: {str(e)}")
-        return {}
-
-
-async def setup_vector_storage(documents_by_type: Dict[str, List]):
-    """设置向量存储"""
-    print("\n🔗 设置向量存储...")
+        return analysis
     
-    if not documents_by_type:
-        print("⚠️ 没有文档可供向量化，跳过向量存储设置")
-        return None
-    
-    try:
-        # 获取嵌入模型
-        embeddings = get_default_embedding_model()
+    def create_processing_plan(self, analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """创建文档处理计划"""
         
-        # 设置MongoDB Atlas向量存储
-        vector_manager = await setup_mongodb_vector_stores(
-            documents_by_type, 
-            embeddings
+        plan = []
+        
+        # 高优先级文档优先处理
+        high_priority_docs = []
+        medium_priority_docs = []
+        
+        for category, info in analysis["by_category"].items():
+            for file_info in info["files"]:
+                if file_info["metadata"]["priority"] == "high":
+                    high_priority_docs.append({
+                        "category": category,
+                        "file": file_info,
+                        "processing_order": 1
+                    })
+                else:
+                    medium_priority_docs.append({
+                        "category": category,
+                        "file": file_info,
+                        "processing_order": 2
+                    })
+        
+        plan.extend(high_priority_docs)
+        plan.extend(medium_priority_docs)
+        
+        return plan
+    
+    def validate_document_quality(self, file_path: Path) -> Dict[str, Any]:
+        """验证文档质量"""
+        
+        validation = {
+            "readable": False,
+            "size_ok": False,
+            "format_supported": False,
+            "estimated_pages": 0,
+            "issues": []
+        }
+        
+        try:
+            # 检查文件大小
+            size_mb = file_path.stat().st_size / 1024 / 1024
+            if size_mb > 0.1:  # 至少100KB
+                validation["size_ok"] = True
+            else:
+                validation["issues"].append("文件过小，可能损坏")
+            
+            # 检查文件格式
+            if file_path.suffix.lower() in ['.pdf', '.pptx', '.docx']:
+                validation["format_supported"] = True
+            else:
+                validation["issues"].append("不支持的文件格式")
+            
+            # 估算页面数（基于文件大小）
+            if file_path.suffix.lower() == '.pdf':
+                validation["estimated_pages"] = max(1, int(size_mb * 50))  # 粗略估算
+            
+            validation["readable"] = validation["size_ok"] and validation["format_supported"]
+            
+        except Exception as e:
+            validation["issues"].append(f"文件访问错误: {e}")
+        
+        return validation
+    
+    def generate_enhancement_suggestions(self, analysis: Dict[str, Any]) -> List[str]:
+        """生成知识库增强建议"""
+        
+        suggestions = []
+        
+        # 基于分析结果生成建议
+        if analysis["total_documents"] >= 6:
+            suggestions.append("✅ 核心文档齐全，可以开始RAG系统开发")
+        
+        if analysis["by_language"]["中文"] > analysis["by_language"]["英文"]:
+            suggestions.append("🌏 中文文档丰富，建议优化中文分词和语义理解")
+        
+        if analysis["missing_files"]:
+            suggestions.append(f"📥 建议补充缺失文档: {', '.join(analysis['missing_files'])}")
+        
+        # 按文档类型提供建议
+        cosmic_docs = analysis["by_category"].get("cosmic", {}).get("found", 0)
+        nesma_docs = analysis["by_category"].get("nesma", {}).get("found", 0)
+        
+        if cosmic_docs >= 4:
+            suggestions.append("🎯 COSMIC文档完整，可以优先开发COSMIC估算模块")
+        
+        if nesma_docs >= 1:
+            suggestions.append("📊 NESMA基础文档可用，建议补充更多实践案例")
+        
+        # 处理优化建议
+        suggestions.extend([
+            "🔧 建议使用unstructured库进行PDF解析，支持表格和图片提取",
+            "📝 建议创建中英文术语对照表，提高检索准确性",
+            "🎨 建议设置智能分块策略，按章节和主题分割文档",
+            "🔍 建议配置多查询检索器，提高知识检索召回率",
+            "📈 建议建立质量评估机制，监控RAG检索效果"
+        ])
+        
+        return suggestions
+    
+    def create_setup_script(self, processing_plan: List[Dict[str, Any]]) -> str:
+        """创建设置脚本"""
+        
+        script_content = f'''#!/usr/bin/env python3
+"""
+自动生成的知识库设置脚本
+生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+"""
+
+import asyncio
+from pathlib import Path
+from langchain_community.document_loaders import (
+    UnstructuredPDFLoader,
+    UnstructuredPowerPointLoader
+)
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+class AutoKnowledgeBaseSetup:
+    def __init__(self):
+        self.base_dir = Path("knowledge_base")
+        self.processing_order = {processing_plan}
+    
+    async def setup_documents(self):
+        """按计划处理文档"""
+        
+        # 中英文优化的分词器
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200,
+            separators=["\\n\\n", "\\n", "。", ".", "!", "?", "；", ";"]
         )
         
-        print("✅ 向量存储设置完成")
+        processed_docs = []
         
-        # 获取统计信息
-        print("\n📊 向量存储统计:")
-        for source_type in documents_by_type.keys():
-            try:
-                stats = await vector_manager.get_collection_stats(source_type)
-                print(f"  {source_type.upper()}:")
-                print(f"    文档数量: {stats['total_documents']}")
-                print(f"    集合名称: {stats['collection_name']}")
-                if stats['standards']:
-                    for standard, info in stats['standards'].items():
-                        print(f"    {standard}: {info['count']} 个文档")
-            except Exception as e:
-                print(f"    ❌ 获取统计失败: {str(e)}")
-        
-        return vector_manager
-        
-    except Exception as e:
-        logger.error(f"❌ 向量存储设置失败: {str(e)}")
-        return None
-
-
-async def test_retrieval_system(vector_manager):
-    """测试检索系统"""
-    print("\n🔍 测试检索系统...")
-    
-    if not vector_manager:
-        print("⚠️ 向量管理器不可用，跳过检索测试")
-        return
-    
-    try:
-        from knowledge_base.retrievers.semantic_retriever import create_knowledge_retrievers
-        
-        # 创建检索器
-        retrievers = await create_knowledge_retrievers(vector_manager)
-        multi_retriever = retrievers["multi_source"]
-        
-        # 测试查询
-        test_queries = [
-            "功能点分类规则",
-            "复杂度计算方法",
-            "数据移动类型"
-        ]
-        
-        for i, query in enumerate(test_queries, 1):
-            print(f"\n  测试查询 {i}: {query}")
+        for item in self.processing_order:
+            category = item["category"]
+            file_info = item["file"]
             
-            try:
-                result = await multi_retriever.adaptive_retrieve(query, min_chunks=1)
-                
-                print(f"    📊 检索到 {len(result.retrieved_chunks)} 个结果")
-                print(f"    ⏱️ 耗时: {result.retrieval_time_ms}ms")
-                
-                if result.retrieved_chunks:
-                    best_chunk = result.retrieved_chunks[0]
-                    print(f"    🎯 最佳匹配 (分数: {best_chunk.relevance_score:.3f})")
-                    print(f"       来源: {best_chunk.source_type.value}")
-                
-            except Exception as e:
-                print(f"    ❌ 查询失败: {str(e)}")
+            file_path = self.base_dir / "documents" / category / file_info["filename"]
+            
+            if not file_path.exists():
+                continue
+            
+            print(f"🔄 处理文档: {{file_info['metadata']['title']}}")
+            
+            # 选择合适的加载器
+            if file_path.suffix.lower() == '.pdf':
+                loader = UnstructuredPDFLoader(
+                    str(file_path),
+                    mode="elements",
+                    strategy="hi_res"  # 高分辨率处理
+                )
+            elif file_path.suffix.lower() == '.pptx':
+                loader = UnstructuredPowerPointLoader(str(file_path))
+            else:
+                continue
+            
+            # 加载和分块
+            docs = await loader.aload()
+            split_docs = text_splitter.split_documents(docs)
+            
+            # 添加元数据
+            for doc in split_docs:
+                doc.metadata.update({{
+                    "source_category": category,
+                    "document_type": file_info["metadata"]["type"],
+                    "language": file_info["metadata"]["language"],
+                    "priority": file_info["metadata"]["priority"],
+                    "title": file_info["metadata"]["title"]
+                }})
+            
+            processed_docs.extend(split_docs)
+            print(f"✅ 完成: {{len(split_docs)}} 个文档块")
         
-        print("\n✅ 检索系统测试完成")
+        return processed_docs
+
+if __name__ == "__main__":
+    setup = AutoKnowledgeBaseSetup()
+    asyncio.run(setup.setup_documents())
+'''
         
-    except Exception as e:
-        logger.error(f"❌ 检索系统测试失败: {str(e)}")
-
-
-async def generate_setup_report(vector_manager, documents_by_type):
-    """生成设置报告"""
-    print("\n📋 生成设置报告...")
-    
-    report = {
-        "setup_time": asyncio.get_event_loop().time(),
-        "document_stats": {
-            source_type: len(docs) 
-            for source_type, docs in documents_by_type.items()
-        },
-        "total_documents": sum(len(docs) for docs in documents_by_type.values()),
-        "vector_storage": "MongoDB Atlas" if vector_manager else "未设置",
-        "embedding_model": "BGE-M3 (默认)",
-        "status": "完成"
-    }
-    
-    print("📊 设置报告:")
-    for key, value in report.items():
-        print(f"  {key}: {value}")
-    
-    # 保存报告到文件
-    import json
-    report_file = Path("knowledge_base_setup_report.json")
-    with open(report_file, "w", encoding="utf-8") as f:
-        json.dump(report, f, ensure_ascii=False, indent=2)
-    
-    print(f"\n📁 报告已保存到: {report_file}")
-    
-    return report
-
+        return script_content
 
 async def main():
     """主函数"""
-    print("🚀 开始知识库初始化...")
+    
+    print("🚀 量子智能化功能点估算系统 - 知识库分析")
     print("=" * 60)
     
-    try:
-        # 1. 检查前置条件
-        if not await check_prerequisites():
-            print("❌ 前置条件检查失败，终止初始化")
-            return
-        
-        # 2. 创建目录
-        await create_document_directories()
-        
-        # 3. 加载文档
-        documents_by_type = await load_and_process_documents()
-        
-        # 4. 设置向量存储
-        vector_manager = await setup_vector_storage(documents_by_type)
-        
-        # 5. 测试检索系统
-        await test_retrieval_system(vector_manager)
-        
-        # 6. 生成报告
-        report = await generate_setup_report(vector_manager, documents_by_type)
-        
-        # 7. 清理
-        if vector_manager:
-            await vector_manager.close()
-        
-        print("\n" + "=" * 60)
-        print("✅ 知识库初始化完成！")
-        
-        # 使用建议
-        print("\n💡 使用建议:")
-        print("1. 将PDF文档放入对应的文档目录:")
-        print(f"   - NESMA: knowledge_base/documents/nesma/")
-        print(f"   - COSMIC: knowledge_base/documents/cosmic/")
-        print(f"   - 通用: knowledge_base/documents/common/")
-        print("2. 重新运行此脚本来更新知识库")
-        print("3. 使用 main.py estimate 命令开始功能点估算")
-        
-    except KeyboardInterrupt:
-        print("\n\n⏹️ 用户中断，知识库初始化已取消")
-    except Exception as e:
-        logger.error(f"❌ 知识库初始化失败: {str(e)}")
-        print(f"\n❌ 初始化失败: {str(e)}")
-        sys.exit(1)
-
+    builder = KnowledgeBaseBuilder()
+    
+    # 分析现有文档
+    print("\n📊 文档资源分析:")
+    analysis = builder.analyze_existing_documents()
+    
+    print(f"📚 总文档数: {analysis['total_documents']}")
+    print(f"🌏 语言分布: 中文 {analysis['by_language']['中文']} 份, 英文 {analysis['by_language']['英文']} 份")
+    print(f"⭐ 优先级分布: 高 {analysis['by_priority']['high']} 份, 中 {analysis['by_priority']['medium']} 份")
+    
+    print("\n📂 分类详情:")
+    for category, info in analysis["by_category"].items():
+        print(f"  {category.upper()}: {info['found']} 份文档")
+        for file_info in info["files"]:
+            print(f"    ✅ {file_info['metadata']['title']} ({file_info['size']})")
+    
+    if analysis["missing_files"]:
+        print(f"\n❌ 缺失文档: {len(analysis['missing_files'])} 份")
+        for missing in analysis["missing_files"]:
+            print(f"    ❌ {missing}")
+    
+    # 文档质量验证
+    print("\n🔍 文档质量验证:")
+    quality_issues = []
+    
+    for category, info in analysis["by_category"].items():
+        for file_info in info["files"]:
+            file_path = builder.documents_dir / category / file_info["filename"]
+            validation = builder.validate_document_quality(file_path)
+            
+            if validation["readable"]:
+                print(f"    ✅ {file_info['filename']}: 质量良好")
+            else:
+                print(f"    ❌ {file_info['filename']}: {', '.join(validation['issues'])}")
+                quality_issues.extend(validation["issues"])
+    
+    # 生成处理计划
+    print("\n📋 文档处理计划:")
+    processing_plan = builder.create_processing_plan(analysis)
+    
+    for i, item in enumerate(processing_plan, 1):
+        priority_icon = "🔥" if item["file"]["metadata"]["priority"] == "high" else "📄"
+        print(f"  {i}. {priority_icon} {item['file']['metadata']['title']}")
+    
+    # 生成增强建议
+    print("\n💡 知识库增强建议:")
+    suggestions = builder.generate_enhancement_suggestions(analysis)
+    
+    for suggestion in suggestions:
+        print(f"  {suggestion}")
+    
+    # 创建自动设置脚本
+    print("\n🔧 生成自动化设置脚本...")
+    script_content = builder.create_setup_script(processing_plan)
+    
+    script_path = builder.base_dir / "auto_setup.py"
+    with open(script_path, 'w', encoding='utf-8') as f:
+        f.write(script_content)
+    
+    print(f"✅ 自动设置脚本已生成: {script_path}")
+    
+    # 总结报告
+    print("\n" + "=" * 60)
+    print("📊 知识库状态总结:")
+    print(f"✅ 可用文档: {analysis['total_documents']} 份")
+    print(f"🎯 标准覆盖: COSMIC完整, NESMA基础")
+    print(f"🌐 语言支持: 中英文双语")
+    print(f"🔧 质量状态: {'良好' if not quality_issues else '需要检查'}")
+    
+    if analysis["total_documents"] >= 5:
+        print("\n🎉 恭喜！您的知识库资源充足，可以开始AI系统开发！")
+        print("\n🔥 推荐后续行动:")
+        print("1. 运行 python knowledge_base/auto_setup.py 初始化向量存储")
+        print("2. 测试RAG检索功能，验证知识库效果")
+        print("3. 开始开发COSMIC估算智能体（文档最完整）")
+        print("4. 逐步完善NESMA估算功能")
+    else:
+        print("\n⚠️ 建议补充更多文档资源后再开始开发")
 
 if __name__ == "__main__":
-    # 设置事件循环策略 (Windows兼容性)
-    if sys.platform.startswith('win'):
-        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-    
     asyncio.run(main()) 

@@ -241,11 +241,11 @@ class COSMICPDFLoader(EnhancedPDFLoader):
             return "general"
 
 
-def create_pdf_loader(source_type: str = "general") -> EnhancedPDFLoader:
-    """工厂函数：创建PDF加载器"""
-    if source_type.upper() == "NESMA":
+def pdf_loader_factory(source_type: str = "general") -> EnhancedPDFLoader:
+    """PDF加载器工厂函数"""
+    if source_type.lower() == "nesma":
         return NESMAPDFLoader()
-    elif source_type.upper() == "COSMIC":
+    elif source_type.lower() == "cosmic":
         return COSMICPDFLoader()
     else:
         return EnhancedPDFLoader()
@@ -307,26 +307,91 @@ async def load_knowledge_base_pdfs(
     return results
 
 
+class BatchPDFProcessor:
+    """批量PDF处理器"""
+    
+    def __init__(self, strategy: str = PDFLoaderStrategy.UNSTRUCTURED):
+        self.loader = EnhancedPDFLoader(strategy)
+        self.processed_files = []
+        self.failed_files = []
+    
+    async def process_directory(
+        self, 
+        directory_path: str,
+        pattern: str = "*.pdf",
+        max_files: Optional[int] = None
+    ) -> Dict[str, List[Document]]:
+        """批量处理目录中的PDF文件"""
+        directory_path = Path(directory_path)
+        if not directory_path.exists():
+            raise FileNotFoundError(f"目录不存在: {directory_path}")
+        
+        pdf_files = list(directory_path.glob(pattern))
+        if max_files:
+            pdf_files = pdf_files[:max_files]
+        
+        results = {
+            "documents": [],
+            "metadata": []
+        }
+        
+        for pdf_file in pdf_files:
+            try:
+                documents = self.loader.load_and_split(str(pdf_file))
+                results["documents"].extend(documents)
+                self.processed_files.append(str(pdf_file))
+                
+                # 添加处理元数据
+                results["metadata"].append({
+                    "file": str(pdf_file),
+                    "status": "success",
+                    "document_count": len(documents)
+                })
+                
+            except Exception as e:
+                self.failed_files.append({"file": str(pdf_file), "error": str(e)})
+                results["metadata"].append({
+                    "file": str(pdf_file),
+                    "status": "failed", 
+                    "error": str(e)
+                })
+        
+        return results
+    
+    def get_processing_stats(self) -> Dict[str, Any]:
+        """获取处理统计信息"""
+        return {
+            "total_processed": len(self.processed_files),
+            "total_failed": len(self.failed_files),
+            "success_rate": len(self.processed_files) / (len(self.processed_files) + len(self.failed_files)) if (len(self.processed_files) + len(self.failed_files)) > 0 else 0,
+            "processed_files": self.processed_files,
+            "failed_files": self.failed_files
+        }
+
+
 if __name__ == "__main__":
     import asyncio
     
     async def main():
         # 测试PDF加载器
-        print("🔍 测试PDF加载器...")
+        print("🧪 测试PDF加载器...")
         
-        # 加载知识库文档
-        documents = await load_knowledge_base_pdfs()
+        # 测试基础加载器
+        loader = EnhancedPDFLoader()
+        print(f"✅ PDF加载器创建成功，策略: {loader.strategy}")
         
-        total_docs = sum(len(docs) for docs in documents.values())
-        print(f"\n📊 总计加载 {total_docs} 个文档块:")
+        # 测试NESMA加载器
+        nesma_loader = NESMAPDFLoader()
+        print(f"✅ NESMA加载器创建成功")
         
-        for source_type, docs in documents.items():
-            print(f"  {source_type.upper()}: {len(docs)} 个文档块")
-            
-            if docs:
-                # 显示第一个文档的示例
-                sample_doc = docs[0]
-                print(f"    示例内容: {sample_doc.page_content[:200]}...")
-                print(f"    元数据: {sample_doc.metadata}")
+        # 测试COSMIC加载器
+        cosmic_loader = COSMICPDFLoader()
+        print(f"✅ COSMIC加载器创建成功")
+        
+        # 测试批量处理器
+        batch_processor = BatchPDFProcessor()
+        print(f"✅ 批量处理器创建成功")
+        
+        print("📄 PDF加载器测试完成!")
     
     asyncio.run(main()) 

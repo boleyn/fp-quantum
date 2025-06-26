@@ -16,8 +16,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from agents.base.base_agent import BaseAgent
 from models.project_models import (
     ProjectInfo, EstimationStrategy, StandardRecommendation, 
-    ProcessDetails, WorkflowState
+    ProcessDetails
 )
+from graph.state_definitions import WorkflowState
 from models.common_models import ProcessingStatus, ConfidenceLevel
 from config.settings import get_settings
 

@@ -1,66 +1,50 @@
 """
 量子智能化功能点估算系统 - 规则检索智能体
 
-负责智能知识检索、结果验证和知识源管理
+基于PgVector实现智能知识检索和验证
 """
 
 import asyncio
-from typing import List, Dict, Any, Optional, Tuple
 import logging
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 
-from langchain_core.language_models import BaseLanguageModel
-from langchain_core.embeddings import Embeddings
 from langchain_core.documents import Document
-from langchain_openai import ChatOpenAI
+from langchain_core.embeddings import Embeddings
+from langchain_core.language_models import BaseLanguageModel
 
 from agents.base.base_agent import BaseAgent
-from knowledge_base.retrievers.semantic_retriever import MultiSourceRetriever, create_knowledge_retrievers
-from knowledge_base.vector_stores.mongodb_atlas import MongoDBAtlasVectorManager
-from knowledge_base.embeddings.embedding_models import get_default_embedding_model
-from models.common_models import (
-    EstimationStandard, RetrievalResult, KnowledgeChunk, 
-    ValidationResult, ConfidenceLevel, ProcessingStatus
-)
-from config.settings import get_settings
+from models.common_models import EstimationStandard, KnowledgeQuery, KnowledgeResult, ValidationResult, ConfidenceLevel
+from knowledge_base.vector_stores.pgvector_store import PgVectorStore
+from knowledge_base.embeddings.embedding_models import get_embedding_model
 
 logger = logging.getLogger(__name__)
 
 
 class RuleRetrieverAgent(BaseAgent):
-    """规则检索智能体"""
+    """规则检索智能体 - 基于PgVector"""
     
     def __init__(
         self,
-        vector_manager: MongoDBAtlasVectorManager,
-        llm: Optional[BaseLanguageModel] = None,
-        embeddings: Optional[Embeddings] = None
+        llm: BaseLanguageModel,
+        embeddings: Embeddings,
+        vector_store: PgVectorStore,
+        agent_name: str = "RuleRetriever"
     ):
-        super().__init__(agent_id="rule_retriever", llm=llm)
+        super().__init__(llm, agent_name)
+        self.embeddings = embeddings
+        self.vector_store = vector_store
         
-        self.vector_manager = vector_manager
-        self.embeddings = embeddings or get_default_embedding_model()
-        self.settings = get_settings()
-        
-        # 初始化检索器
-        self.multi_source_retriever: Optional[MultiSourceRetriever] = None
-        self.retrievers: Dict[str, Any] = {}
-        
-        # 检索历史和缓存
-        self.retrieval_cache: Dict[str, RetrievalResult] = {}
-        self.retrieval_history: List[RetrievalResult] = []
-        
+        # 检索配置
+        self.retrieval_config = {
+            "default_k": 5,
+            "relevance_threshold": 0.7,
+            "max_retries": 3
+        }
+
     async def initialize(self):
         """初始化智能体"""
         await super().initialize()
-        
-        # 创建检索器
-        self.retrievers = await create_knowledge_retrievers(
-            self.vector_manager,
-            self.embeddings,
-            self.llm
-        )
-        self.multi_source_retriever = self.retrievers["multi_source"]
         
         logger.info("✅ 规则检索智能体初始化完成")
     
@@ -71,7 +55,7 @@ class RuleRetrieverAgent(BaseAgent):
         use_cache: bool = True,
         min_chunks: int = 3,
         max_retries: int = 2
-    ) -> RetrievalResult:
+    ) -> KnowledgeResult:
         """检索相关规则"""
         
         # 生成缓存键
@@ -123,7 +107,7 @@ class RuleRetrieverAgent(BaseAgent):
                 logger.warning(f"⚠️ 检索尝试 {attempt + 1} 失败: {str(e)}")
                 if attempt == max_retries:
                     # 最后一次尝试失败，返回空结果
-                    retrieval_result = RetrievalResult(
+                    retrieval_result = KnowledgeResult(
                         query=query,
                         source_type=standard or EstimationStandard.BOTH,
                         retrieved_chunks=[],
@@ -146,7 +130,7 @@ class RuleRetrieverAgent(BaseAgent):
         
         return retrieval_result
     
-    async def _validate_retrieval_result(self, retrieval_result: RetrievalResult) -> ValidationResult:
+    async def _validate_retrieval_result(self, retrieval_result: KnowledgeResult) -> ValidationResult:
         """验证检索结果的质量"""
         
         if not retrieval_result.retrieved_chunks:
@@ -216,7 +200,7 @@ class RuleRetrieverAgent(BaseAgent):
             }
         )
     
-    async def _llm_validate_relevance(self, retrieval_result: RetrievalResult) -> Dict[str, Any]:
+    async def _llm_validate_relevance(self, retrieval_result: KnowledgeResult) -> Dict[str, Any]:
         """使用LLM验证检索结果的相关性"""
         
         if not self.llm or not retrieval_result.retrieved_chunks:
@@ -273,7 +257,7 @@ class RuleRetrieverAgent(BaseAgent):
         self,
         context: Dict[str, Any],
         specific_queries: Optional[List[str]] = None
-    ) -> Dict[str, RetrievalResult]:
+    ) -> Dict[str, KnowledgeResult]:
         """根据上下文进行多方面检索"""
         
         # 提取检索查询
@@ -382,26 +366,16 @@ class RuleRetrieverAgent(BaseAgent):
 
 
 async def create_rule_retriever_agent(
-    vector_manager: MongoDBAtlasVectorManager,
-    llm: Optional[BaseLanguageModel] = None,
-    embeddings: Optional[Embeddings] = None
+    llm: BaseLanguageModel,
+    embeddings: Embeddings,
+    vector_store: PgVectorStore
 ) -> RuleRetrieverAgent:
     """创建规则检索智能体"""
     
-    if llm is None:
-        settings = get_settings()
-        llm = ChatOpenAI(
-            model=settings.llm.worker_model,
-            api_key=settings.llm.deepseek_api_key,
-            base_url=settings.llm.deepseek_api_base,
-            temperature=0.1,
-            max_tokens=4000
-        )
-    
     agent = RuleRetrieverAgent(
-        vector_manager=vector_manager,
         llm=llm,
-        embeddings=embeddings
+        embeddings=embeddings,
+        vector_store=vector_store
     )
     
     await agent.initialize()
@@ -411,14 +385,14 @@ async def create_rule_retriever_agent(
 if __name__ == "__main__":
     async def main():
         # 测试规则检索智能体
-        from knowledge_base.vector_stores.mongodb_atlas import MongoDBAtlasVectorManager
+        from knowledge_base.vector_stores.pgvector_store import PgVectorStore
         
         # 初始化向量管理器
-        vector_manager = MongoDBAtlasVectorManager()
-        await vector_manager.initialize()
+        vector_store = PgVectorStore()
+        await vector_store.initialize()
         
         # 创建规则检索智能体
-        agent = await create_rule_retriever_agent(vector_manager)
+        agent = await create_rule_retriever_agent(vector_store.llm, vector_store.embeddings, vector_store)
         
         # 测试查询
         test_queries = [
@@ -455,6 +429,6 @@ if __name__ == "__main__":
         for key, value in stats.items():
             print(f"  {key}: {value}")
         
-        await vector_manager.close()
+        await vector_store.close()
     
     asyncio.run(main()) 

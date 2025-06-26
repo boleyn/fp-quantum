@@ -2,7 +2,10 @@
 """
 量子智能化功能点估算系统 - 知识库演示脚本
 
-演示知识库模块的完整功能和使用方法
+展示基于PgVector的知识库功能，包括：
+- 文档加载和处理
+- 向量存储和检索
+- RAG链构建和查询
 """
 
 import asyncio
@@ -10,6 +13,16 @@ import logging
 import sys
 from pathlib import Path
 from typing import Dict, Any, List
+from datetime import datetime
+
+from langchain_core.documents import Document
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+
+from knowledge_base.loaders.pdf_loader import EnhancedPDFLoader
+from knowledge_base.vector_stores.pgvector_store import PgVectorStore, create_pgvector_store
+from knowledge_base.rag_chains import RAGChainBuilder
+from knowledge_base.embeddings.embedding_models import get_embedding_model
+from config.settings import get_settings
 
 # 添加项目根目录到路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -214,12 +227,12 @@ Write将数据从功能过程移动到持久存储。
             self.rag_system = await quick_setup_rag(
                 document_paths=document_paths,
                 embedding_model="bge_m3",
-                vector_store="chroma",
+                vector_store="pgvector",
                 include_web=False
             )
             
             print("✅ RAG系统设置完成！")
-            print(f"   - 向量存储类型: chroma")
+            print(f"   - 向量存储类型: pgvector")
             print(f"   - 嵌入模型: bge_m3")
             print(f"   - 混合检索: 启用")
             
@@ -366,20 +379,22 @@ Write将数据从功能过程移动到持久存储。
         try:
             # 1. 向量存储统计
             print("1. 向量存储统计信息")
-            from knowledge_base.vector_stores.chroma_store import ChromaVectorStore
+            from knowledge_base.vector_stores.pgvector_store import PgVectorStore
             from knowledge_base.embeddings.embedding_models import get_embedding_model
             
             embeddings = get_embedding_model("bge_m3")
-            chroma_store = ChromaVectorStore(persist_directory="./chroma_db")
+            pgvector_store = PgVectorStore()
             
-            # 列出所有集合
-            collections = chroma_store.list_collections()
-            print(f"   发现集合: {collections}")
+            # 显示支持的源类型
+            source_types = pgvector_store.source_types
+            print(f"   支持的源类型: {source_types}")
             
-            for collection_name in collections[:2]:  # 只显示前2个
-                stats = chroma_store.get_collection_stats(collection_name, embeddings)
-                if stats.get('exists'):
-                    print(f"   集合 '{collection_name}': {stats.get('count', 0)} 个文档")
+            for source_type in source_types[:2]:  # 只显示前2个
+                try:
+                    stats = await pgvector_store.get_collection_stats(source_type)
+                    print(f"   源类型 '{source_type}': {stats.get('status', '未知')} 状态")
+                except Exception:
+                    print(f"   源类型 '{source_type}': 未连接")
             
             # 2. 嵌入模型比较
             print("\n2. 嵌入模型信息")
@@ -424,10 +439,8 @@ Write将数据从功能过程移动到持久存储。
                 shutil.rmtree(demo_dir)
                 print("✅ 演示文档已清理")
             
-            # 清理向量存储
-            chroma_dir = Path("./chroma_db")
-            if chroma_dir.exists():
-                print("注意: 向量存储数据保留，如需清理请手动删除 ./chroma_db 目录")
+            # PgVector数据存储在PostgreSQL中，无需清理本地文件
+            print("注意: PgVector数据存储在PostgreSQL数据库中")
             
         except Exception as e:
             print(f"⚠️ 清理失败: {e}")

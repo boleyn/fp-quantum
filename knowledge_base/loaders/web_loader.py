@@ -19,6 +19,24 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 logger = logging.getLogger(__name__)
 
+# 预定义的网页资源
+WEB_SOURCES = {
+    "nesma": [
+        "https://www.nesma.org/",
+        "https://www.nesma.org/function-point-analysis/",
+        "https://www.nesma.org/sizing/function-point-analysis/"
+    ],
+    "cosmic": [
+        "https://cosmic-sizing.org/",
+        "https://cosmic-sizing.org/cosmic-method/",
+        "https://cosmic-sizing.org/publications/"
+    ],
+    "common": [
+        "https://www.ifpug.org/",
+        "https://en.wikipedia.org/wiki/Function_point"
+    ]
+}
+
 
 class EnhancedWebLoader:
     """增强的网页加载器"""

@@ -15,9 +15,9 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from agents.base.base_agent import SpecializedAgent
-from models.nesma_models import NESMAFunctionClassification, NESMAComplexityResult
+from models.nesma_models import NESMAFunctionClassification, NESMAComplexityCalculation
 from models.cosmic_models import COSMICDataMovement, COSMICFunctionalProcess
-from models.common_models import ComparisonResult
+from models.common_models import ComparisonAnalysis
 from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -122,7 +122,7 @@ class ComparisonAnalyzerAgent(SpecializedAgent):
         nesma_results: Dict[str, Any],
         cosmic_results: Dict[str, Any],
         project_info: Dict[str, Any]
-    ) -> ComparisonResult:
+    ) -> ComparisonAnalysis:
         """执行跨标准对比分析"""
         
         logger.info("🔍 开始执行跨标准对比分析...")
@@ -155,7 +155,7 @@ class ComparisonAnalyzerAgent(SpecializedAgent):
             
             processing_time = time.time() - start_time
             
-            comparison_result = ComparisonResult(
+            comparison_result = ComparisonAnalysis(
                 nesma_total=nesma_results.get("total_ufp", 0),
                 cosmic_total=cosmic_results.get("total_cfp", 0),
                 difference_percentage=basic_comparison["difference_percentage"],

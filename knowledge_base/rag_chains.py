@@ -2,6 +2,7 @@
 量子智能化功能点估算系统 - RAG链
 
 构建完整的RAG管道，整合文档加载、向量存储、检索和生成
+统一使用PgVector向量存储
 """
 
 import logging
@@ -24,8 +25,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from .loaders.pdf_loader import EnhancedPDFLoader, BatchPDFProcessor
 from .loaders.web_loader import load_web_knowledge_base
 from .loaders.custom_loaders import FunctionPointDocumentLoader
-from .vector_stores.mongodb_atlas import MongoDBAtlasVectorStore
-from .vector_stores.chroma_store import ChromaVectorStore, create_chroma_knowledge_base
+# 统一使用PgVector向量存储
+from .vector_stores.pgvector_store import PgVectorStore, create_pgvector_store
 from .vector_stores.hybrid_search import HybridSearchStrategy, NESMAHybridSearch, COSMICHybridSearch
 from .retrievers.semantic_retriever import EnhancedSemanticRetriever
 from .retrievers.keyword_retriever import TFIDFRetriever, NESMAKeywordRetriever, COSMICKeywordRetriever
@@ -36,23 +37,21 @@ logger = logging.getLogger(__name__)
 
 
 class RAGChainBuilder:
-    """RAG链构建器"""
+    """RAG链构建器 - 基于PgVector"""
     
     def __init__(
         self,
         embeddings: Embeddings,
         llm: BaseLanguageModel,
-        vector_store_type: str = "chroma",  # chroma, mongodb
         use_hybrid_search: bool = True
     ):
         self.embeddings = embeddings
         self.llm = llm
-        self.vector_store_type = vector_store_type
         self.use_hybrid_search = use_hybrid_search
         
         # 存储组件
         self.documents: Dict[str, List[Document]] = {}
-        self.vector_stores: Dict[str, VectorStore] = {}
+        self.vector_store: Optional[PgVectorStore] = None
         self.retrievers: Dict[str, Any] = {}
         self.chains: Dict[str, Any] = {}
         
@@ -63,16 +62,16 @@ class RAGChainBuilder:
     ) -> Dict[str, int]:
         """构建知识库"""
         
-        logger.info("🚀 开始构建知识库...")
+        logger.info("🚀 开始构建基于PgVector的知识库...")
         
         # 1. 加载文档
         all_documents = await self._load_all_documents(document_paths, include_web_sources)
         
-        # 2. 创建向量存储
-        vector_stores = await self._create_vector_stores(all_documents)
+        # 2. 创建PgVector存储
+        vector_store = await self._create_pgvector_store(all_documents)
         
         # 3. 创建检索器
-        retrievers = await self._create_retrievers(vector_stores, all_documents)
+        retrievers = await self._create_retrievers(vector_store, all_documents)
         
         # 4. 构建RAG链
         chains = await self._build_rag_chains(retrievers)
@@ -82,7 +81,7 @@ class RAGChainBuilder:
         for doc_type, docs in all_documents.items():
             stats[doc_type] = len(docs)
         
-        logger.info(f"✅ 知识库构建完成: {stats}")
+        logger.info(f"✅ PgVector知识库构建完成: {stats}")
         return stats
     
     async def _load_all_documents(
@@ -146,58 +145,26 @@ class RAGChainBuilder:
         
         return all_documents
     
-    async def _create_vector_stores(
+    async def _create_pgvector_store(
         self,
         all_documents: Dict[str, List[Document]]
-    ) -> Dict[str, VectorStore]:
-        """创建向量存储"""
+    ) -> PgVectorStore:
+        """创建PgVector存储"""
         
-        logger.info(f"🗄️ 创建向量存储 ({self.vector_store_type})...")
+        logger.info("��️ 创建PgVector存储...")
         
-        vector_stores = {}
+        vector_store = create_pgvector_store(
+            documents_by_type=all_documents,
+            embeddings=self.embeddings
+        )
         
-        if self.vector_store_type == "chroma":
-            # 使用Chroma向量存储
-            chroma_store = create_chroma_knowledge_base(
-                documents_by_type=all_documents,
-                embeddings=self.embeddings,
-                persist_directory="./chroma_db",
-                collection_prefix="fp_quantum"
-            )
-            
-            # 为每种类型创建向量存储访问器
-            for doc_type in all_documents.keys():
-                collection = chroma_store.get_collection(
-                    collection_name=doc_type,
-                    embeddings=self.embeddings,
-                    create_if_not_exists=False
-                )
-                if collection:
-                    vector_stores[doc_type] = collection
-            
-        elif self.vector_store_type == "mongodb":
-            # 使用MongoDB Atlas向量存储
-            from .vector_stores.mongodb_atlas import setup_mongodb_vector
-            
-            for doc_type, documents in all_documents.items():
-                if documents:
-                    vector_store = await setup_mongodb_vector(
-                        documents=documents,
-                        embeddings=self.embeddings,
-                        collection_name=f"fp_quantum_{doc_type}"
-                    )
-                    vector_stores[doc_type] = vector_store
-        
-        else:
-            raise ValueError(f"不支持的向量存储类型: {self.vector_store_type}")
-        
-        self.vector_stores = vector_stores
-        logger.info(f"✅ 向量存储创建完成: {list(vector_stores.keys())}")
-        return vector_stores
+        self.vector_store = vector_store
+        logger.info(f"✅ PgVector存储创建完成: {vector_store.collection_name}")
+        return vector_store
     
     async def _create_retrievers(
         self,
-        vector_stores: Dict[str, VectorStore],
+        vector_store: PgVectorStore,
         all_documents: Dict[str, List[Document]]
     ) -> Dict[str, Any]:
         """创建检索器"""
@@ -207,8 +174,8 @@ class RAGChainBuilder:
         retrievers = {}
         
         # 为每种文档类型创建检索器
-        for doc_type, vector_store in vector_stores.items():
-            type_documents = all_documents.get(doc_type, [])
+        for doc_type, documents in all_documents.items():
+            type_documents = documents
             
             if self.use_hybrid_search:
                 # 创建混合检索器
@@ -480,8 +447,7 @@ class RAGChainFactory:
         document_paths: Dict[str, Union[str, Path, List[str]]],
         embedding_model_name: str = "bge_m3",
         llm: Optional[BaseLanguageModel] = None,
-        vector_store_type: str = "chroma",
-        include_web_sources: bool = True
+        use_hybrid_search: bool = True
     ) -> RAGChainBuilder:
         """创建完整的RAG系统"""
         
@@ -502,14 +468,13 @@ class RAGChainFactory:
         rag_builder = RAGChainBuilder(
             embeddings=embeddings,
             llm=llm,
-            vector_store_type=vector_store_type,
-            use_hybrid_search=True
+            use_hybrid_search=use_hybrid_search
         )
         
         # 构建知识库
         await rag_builder.build_knowledge_base(
             document_paths=document_paths,
-            include_web_sources=include_web_sources
+            include_web_sources=True
         )
         
         return rag_builder
@@ -529,8 +494,7 @@ async def setup_default_rag_system() -> RAGChainBuilder:
     return await RAGChainFactory.create_complete_rag_system(
         document_paths=DEFAULT_DOCUMENT_PATHS,
         embedding_model_name="bge_m3",
-        vector_store_type="chroma",
-        include_web_sources=False  # 默认不包含网页源
+        use_hybrid_search=True
     )
 
 

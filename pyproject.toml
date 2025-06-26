@@ -14,58 +14,39 @@ dependencies = [
     # LangChain核心生态
     "langchain>=0.3.0",
     "langchain-community>=0.3.0",
-    "langchain-openai>=0.2.0",      # OpenAI兼容API支持（DeepSeek + BGE-M3）
+    "langchain-openai>=0.2.0", # OpenAI兼容API支持（DeepSeek + BGE-M3）
+    "langchain-postgres>=0.0.12", # PostgreSQL集成
     "langgraph>=0.2.0",
     "langgraph-checkpoint>=2.0.0",
-    
     # 所有模型通过OpenAI兼容API调用
-    "openai>=1.0.0",                # 统一的API客户端
-    
-    # 向量存储集成
-    "langchain-chroma>=0.1.0",      # 开发环境向量存储
-    "langchain-mongodb>=0.2.0",     # MongoDB Atlas向量搜索
-    "chromadb>=0.5.0",              # Chroma向量数据库
-    
-    # 数据库驱动
-    "motor>=3.6.0",                 # MongoDB异步驱动
-    "pymongo>=4.8.0",               # MongoDB同步驱动
-    "asyncpg>=0.29.0",              # PostgreSQL异步驱动
-    "psycopg2-binary>=2.9.0",       # PostgreSQL同步驱动
-    "pgvector>=0.3.0",              # PostgreSQL向量扩展
-    "sqlalchemy>=2.0.0",            # ORM框架
-    
+    "openai>=1.0.0", # 统一的API客户端
+    # PgVector向量存储
+    "psycopg[binary]>=3.1.0", # PostgreSQL异步驱动
+    "pgvector>=0.3.0", # PgVector Python客户端
+    "sqlalchemy>=2.0.0", # ORM支持
+    "asyncpg>=0.29.0", # 异步PostgreSQL驱动
+    # 数据库（MongoDB用于业务数据，非向量）
+    "motor>=3.6.0", # MongoDB异步驱动
+    "pymongo>=4.8.0", # MongoDB同步驱动
     # 文档处理（LangChain内置）
-    "pypdf>=4.3.0",                 # PDF处理
-    "unstructured>=0.15.0",         # 结构化文档解析
-    "beautifulsoup4>=4.12.0",       # HTML解析
-    "markdown>=3.6.0",              # Markdown处理
-    
+    "pypdf>=4.3.0", # PDF处理
+    "unstructured>=0.15.0", # 结构化文档解析
+    "beautifulsoup4>=4.12.0", # HTML解析
     # Web框架
     "fastapi>=0.100.0",
     "uvicorn[standard]>=0.23.0",
     "pydantic>=2.9.0",
-    "pydantic-settings>=2.5.0",
-    
     # 工具库
-    "tiktoken>=0.7.0",              # Token计算
-    "pyyaml>=6.0.0",                # YAML配置
-    "python-dotenv>=1.0.0",         # 环境变量
-    "tenacity>=8.0.0",              # 重试机制
-    "rich>=13.0.0",                 # 控制台输出美化
-    "typer>=0.12.0",                # CLI接口
-    
-    # 数据处理和可视化
-    "pandas>=2.0.0",
-    "numpy>=1.24.0",
+    "tiktoken>=0.7.0", # Token计算
+    "pyyaml>=6.0.0",
+    "python-dotenv>=1.0.0",
+    "tenacity>=8.0.0",
+    "streamlit>=1.28.0",
     "plotly>=5.17.0",
-    "matplotlib>=3.7.0",
-    
-    # 日志和监控
-    "loguru>=0.7.0",
-    "prometheus-client>=0.19.0",
-    
-    # 测试和验证
-    "jsonschema>=4.17.0",
+    "pandas>=2.0.0",
+    "pillow-heif>=0.22.0",
+    "typer>=0.9.0", # 命令行界面框架
+    "rank-bm25>=0.2.2",
 ]
 
 [project.optional-dependencies]
@@ -83,7 +64,6 @@ dev = [
 ]
 
 web = [
-    "streamlit>=1.28.0",
     "gradio>=4.0.0",
     "jinja2>=3.1.0",
 ]
@@ -195,3 +175,10 @@ packages = [
     "models",
     "scripts"
 ] 
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.0.0",
+    "pytest-cov>=6.2.1",
+]

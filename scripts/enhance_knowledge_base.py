@@ -1,23 +1,26 @@
+#!/usr/bin/env python3
 """
-量子智能化功能点估算系统 - 知识库增强脚本
+知识库增强脚本 - 基于PgVector
 
-添加NESMA和COSMIC标准文档，完善知识库内容
+提供高级的知识库管理功能，包括文档增量更新、向量重建、质量检查等
+统一使用PgVector向量存储
 """
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 from typing import Dict, List, Any, Optional
-import logging
 from datetime import datetime
 
-from langchain_community.document_loaders import TextLoader, JSONLoader
+from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
-from langchain_chroma import Chroma
 
+from knowledge_base.loaders.pdf_loader import EnhancedPDFLoader, BatchPDFProcessor
+from knowledge_base.vector_stores.pgvector_store import PgVectorStore, create_pgvector_store
 from knowledge_base.embeddings.embedding_models import get_embedding_model
-from knowledge_base.vector_stores.mongodb_atlas import setup_mongodb_vector
+from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -955,17 +958,17 @@ class KnowledgeBaseEnhancer:
             for doc in documents
         ]
         
-        # 创建Chroma向量存储（开发环境）
+        # 创建PgVector向量存储（开发环境）
         try:
-            vectorstore = Chroma.from_texts(
+            vectorstore = PgVectorStore.from_texts(
                 texts=texts,
                 embedding=self.embeddings,
                 metadatas=metadatas,
-                persist_directory="./chroma_db_enhanced"
+                persist_directory="./pgvector_db_enhanced"
             )
-            logger.info("✅ Chroma向量存储创建成功")
+            logger.info("✅ PgVector向量存储创建成功")
         except Exception as e:
-            logger.error(f"Chroma向量存储创建失败: {e}")
+            logger.error(f"PgVector向量存储创建失败: {e}")
 
 
 async def main():

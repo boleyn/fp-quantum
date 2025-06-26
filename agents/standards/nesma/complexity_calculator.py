@@ -17,7 +17,7 @@ from agents.base.base_agent import SpecializedAgent
 from agents.knowledge.rule_retriever import RuleRetrieverAgent
 from models.nesma_models import (
     NESMAFunctionType, NESMAFunctionClassification,
-    ComplexityLevel, NESMAComplexityResult
+    NESMAComplexityLevel, NESMAComplexityCalculation
 )
 from models.common_models import ConfidenceLevel
 from config.settings import get_settings
@@ -44,7 +44,7 @@ class NESMAComplexityCalculatorAgent(SpecializedAgent):
         
         # NESMA复杂度规则数据库
         self.complexity_rules = self._load_complexity_rules()
-        self.calculation_history: List[NESMAComplexityResult] = []
+        self.calculation_history: List[NESMAComplexityCalculation] = []
         
     def _load_complexity_rules(self) -> Dict[str, Any]:
         """加载NESMA复杂度计算规则"""
@@ -240,7 +240,7 @@ class NESMAComplexityCalculatorAgent(SpecializedAgent):
         classification: NESMAFunctionClassification,
         function_description: str,
         detailed_data: Optional[Dict[str, Any]] = None
-    ) -> NESMAComplexityResult:
+    ) -> NESMAComplexityCalculation:
         """计算功能复杂度"""
         
         # 1. 获取相关NESMA复杂度规则
@@ -283,11 +283,19 @@ class NESMAComplexityCalculatorAgent(SpecializedAgent):
         }
         
         # 6. 构建复杂度结果
-        complexity_result = NESMAComplexityResult(
+        complexity_result = NESMAComplexityCalculation(
             function_id=classification.function_id,
-            complexity=complexity_level,
+            function_type=classification.function_type,
             det_count=det_count,
             ret_count=ret_ftr_count if classification.function_type in ["ILF", "EIF"] else 0,
+            complexity=complexity_level,
+            complexity_matrix_used=f"{classification.function_type}_complexity_matrix",
+            calculation_steps=[
+                f"1. 分析功能类型: {classification.function_type}",
+                f"2. 计算DET数量: {det_count}",
+                f"3. 计算{'RET' if classification.function_type in ['ILF', 'EIF'] else 'FTR'}数量: {ret_ftr_count}",
+                f"4. 查询复杂度矩阵确定等级: {complexity_level}"
+            ],
             calculation_details=calculation_details
         )
         
@@ -299,7 +307,7 @@ class NESMAComplexityCalculatorAgent(SpecializedAgent):
     async def calculate_batch_complexity(
         self, 
         classifications: List[NESMAFunctionClassification]
-    ) -> List[NESMAComplexityResult]:
+    ) -> List[NESMAComplexityCalculation]:
         """批量计算功能复杂度"""
         
         complexity_results = []
@@ -368,7 +376,7 @@ class NESMAComplexityCalculatorAgent(SpecializedAgent):
     
     async def validate_complexity_result(
         self,
-        complexity_result: NESMAComplexityResult,
+        complexity_result: NESMAComplexityCalculation,
         function_description: str
     ) -> Dict[str, Any]:
         """验证复杂度计算结果"""
@@ -536,7 +544,7 @@ DET计算规则（{function_type}）：
         function_type: NESMAFunctionType,
         det_count: int,
         ret_ftr_count: int
-    ) -> ComplexityLevel:
+    ) -> NESMAComplexityLevel:
         """根据DET和RET/FTR数量确定复杂度等级"""
         
         matrix = self.complexity_rules[function_type]["complexity_matrix"]
@@ -552,11 +560,11 @@ DET计算规则（{function_type}）：
         
         # 转换为枚举
         if complexity_str == "Low":
-            return ComplexityLevel.LOW
+            return NESMAComplexityLevel.LOW
         elif complexity_str == "Average":
-            return ComplexityLevel.AVERAGE
+            return NESMAComplexityLevel.AVERAGE
         else:
-            return ComplexityLevel.HIGH
+            return NESMAComplexityLevel.HIGH
     
     def _get_det_range(self, det_count: int) -> str:
         """获取DET计数范围"""
@@ -620,15 +628,22 @@ DET计算规则（{function_type}）：
     def _create_fallback_complexity(
         self, 
         classification: NESMAFunctionClassification
-    ) -> NESMAComplexityResult:
+    ) -> NESMAComplexityCalculation:
         """创建保守的复杂度估算"""
         
         # 使用保守的中等复杂度
-        return NESMAComplexityResult(
+        return NESMAComplexityCalculation(
             function_id=classification.function_id,
-            complexity=ComplexityLevel.AVERAGE,
+            function_type=classification.function_type,
             det_count=10,  # 保守估计
             ret_count=2,   # 保守估计
+            complexity=NESMAComplexityLevel.AVERAGE,
+            complexity_matrix_used=f"{classification.function_type}_fallback_matrix",
+            calculation_steps=[
+                "1. 自动计算失败",
+                "2. 使用保守估计",
+                "3. 复杂度设为Average"
+            ],
             calculation_details={
                 "fallback_calculation": True,
                 "reason": "自动计算失败，使用保守估计",
@@ -731,7 +746,7 @@ DET计算规则（{function_type}）：
     
     def _generate_complexity_suggestions(
         self,
-        complexity_result: NESMAComplexityResult,
+        complexity_result: NESMAComplexityCalculation,
         validation_issues: List[Dict[str, str]]
     ) -> List[str]:
         """生成复杂度计算改进建议"""
@@ -750,7 +765,7 @@ DET计算规则（{function_type}）：
         
         return suggestions
     
-    def get_calculation_history(self) -> List[NESMAComplexityResult]:
+    def get_calculation_history(self) -> List[NESMAComplexityCalculation]:
         """获取计算历史"""
         return self.calculation_history.copy()
     

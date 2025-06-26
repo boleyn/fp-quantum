@@ -9,7 +9,7 @@
 
 功能特性：
 1. 支持多种文档格式（PDF、Word、Markdown、网页等）
-2. 多种向量存储后端（Chroma、MongoDB Atlas）
+2. 基于PgVector的向量存储后端
 3. 混合检索策略（语义+关键词+BM25）
 4. NESMA和COSMIC专用检索优化
 5. 异步处理和批量操作
@@ -42,26 +42,17 @@ from .loaders.web_loader import (
     WEB_SOURCES
 )
 
-# 向量存储
-from .vector_stores.chroma_store import (
-    ChromaVectorStore,
-    create_chroma_knowledge_base
-)
-from .vector_stores.mongodb_atlas import (
-    MongoDBAtlasVectorStore,
-    setup_mongodb_vector
-)
-from .vector_stores.hybrid_search import (
-    HybridSearchStrategy,
-    NESMAHybridSearch,
-    COSMICHybridSearch
+# 向量存储相关导入 - 统一使用PgVector
+from .vector_stores.pgvector_store import (
+    PgVectorStore,
+    create_pgvector_store,
 )
 
 # 检索器
 from .retrievers.semantic_retriever import (
     EnhancedSemanticRetriever,
-    NESMASemanticRetriever,
-    COSMICSemanticRetriever
+    PgVectorMultiSourceRetriever,
+    create_pgvector_retrievers
 )
 from .retrievers.keyword_retriever import (
     TFIDFRetriever,
@@ -70,73 +61,57 @@ from .retrievers.keyword_retriever import (
     COSMICKeywordRetriever,
     KeywordRetrieverFactory
 )
-from .retrievers.multi_query_retriever import (
-    EnhancedMultiQueryRetriever,
-    NESMAMultiQueryRetriever,
-    COSMICMultiQueryRetriever,
-    AdaptiveQueryExpander
-)
 
 # 嵌入模型
 from .embeddings.embedding_models import (
     get_embedding_model,
-    embedding_models,
+    get_default_embedding_model,
+    get_embedding_manager,
     EmbeddingModelManager,
-    validate_embedding_model
+    test_embedding_model
 )
+
+# 自动设置
+from .auto_setup import AutoKnowledgeBaseSetup
 
 # 版本信息
 __version__ = "1.0.0"
 __author__ = "量子智能化功能点估算团队"
 
-# 导出的公共API
+# 主要导出
 __all__ = [
-    # 核心RAG组件
-    "RAGChainBuilder",
-    "RAGChainFactory", 
-    "setup_default_rag_system",
-    "DEFAULT_DOCUMENT_PATHS",
-    
     # 文档加载器
     "EnhancedPDFLoader",
-    "BatchPDFProcessor",
-    "pdf_loader_factory",
-    "FunctionPointDocumentLoader",
-    "JSONDocumentLoader",
-    "CSVDocumentLoader", 
-    "YAMLDocumentLoader",
-    "EnhancedWebLoader",
+    "BatchPDFProcessor", 
     "load_web_knowledge_base",
-    "WEB_SOURCES",
+    "FunctionPointDocumentLoader",
     
-    # 向量存储
-    "ChromaVectorStore",
-    "create_chroma_knowledge_base",
-    "MongoDBAtlasVectorStore",
-    "setup_mongodb_vector",
+    # 向量存储 - 仅PgVector
+    "PgVectorStore",
+    "create_pgvector_store",
+    
+    # 搜索和检索
     "HybridSearchStrategy",
-    "NESMAHybridSearch",
-    "COSMICHybridSearch",
-    
-    # 检索器
+    "AdaptiveHybridSearch",
     "EnhancedSemanticRetriever",
-    "NESMASemanticRetriever",
-    "COSMICSemanticRetriever",
+    "PgVectorMultiSourceRetriever",
+    "create_pgvector_retrievers",
     "TFIDFRetriever",
-    "BooleanRetriever",
     "NESMAKeywordRetriever",
     "COSMICKeywordRetriever",
-    "KeywordRetrieverFactory",
-    "EnhancedMultiQueryRetriever",
     "NESMAMultiQueryRetriever",
     "COSMICMultiQueryRetriever",
-    "AdaptiveQueryExpander",
     
     # 嵌入模型
     "get_embedding_model",
-    "embedding_models",
-    "EmbeddingModelManager",
-    "validate_embedding_model"
+    
+    # RAG链
+    "RAGChainBuilder",
+    "NESMARagChain",
+    "COSMIRagChain",
+    
+    # 自动设置
+    "auto_setup_knowledge_base",
 ]
 
 
@@ -144,7 +119,7 @@ __all__ = [
 async def quick_setup_rag(
     document_paths: dict = None,
     embedding_model: str = "bge_m3",
-    vector_store: str = "chroma",
+    vector_store: str = "pgvector",
     include_web: bool = False
 ):
     """
@@ -153,7 +128,7 @@ async def quick_setup_rag(
     Args:
         document_paths: 文档路径字典，默认使用DEFAULT_DOCUMENT_PATHS
         embedding_model: 嵌入模型名称
-        vector_store: 向量存储类型 (chroma/mongodb)
+        vector_store: 向量存储类型 (仅支持pgvector)
         include_web: 是否包含网页资源
         
     Returns:
@@ -173,7 +148,8 @@ async def quick_setup_rag(
 
 def get_available_models():
     """获取可用的嵌入模型列表"""
-    return list(embedding_models.keys())
+    manager = get_embedding_manager()
+    return manager.get_available_models()
 
 
 def get_supported_formats():
@@ -195,7 +171,7 @@ KNOWLEDGE_BASE_CONFIG = {
     "default_chunk_size": 1000,
     "default_chunk_overlap": 200,
     "default_embedding_model": "bge_m3",
-    "default_vector_store": "chroma",
+    "default_vector_store": "pgvector",
     "supported_languages": ["zh", "en"],
     "max_file_size": "50MB",
     "batch_size": 100
@@ -224,14 +200,14 @@ def _health_check():
         issues.append("langchain_core 未安装")
     
     try:
-        import chromadb
+        import langchain_postgres
     except ImportError:
-        issues.append("chromadb 未安装 (Chroma向量存储将不可用)")
+        issues.append("langchain_postgres 未安装 (PgVector向量存储将不可用)")
     
     try:
-        import pymongo
+        import psycopg
     except ImportError:
-        issues.append("pymongo 未安装 (MongoDB向量存储将不可用)")
+        issues.append("psycopg 未安装 (PostgreSQL连接将不可用)")
     
     try:
         from rank_bm25 import BM25Okapi
@@ -246,3 +222,18 @@ def _health_check():
 
 # 执行健康检查
 _health_check()
+
+# 自动设置知识库的便捷函数
+async def auto_setup_knowledge_base():
+    """自动设置知识库的便捷函数"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        setup = AutoKnowledgeBaseSetup()
+        processed_docs = await setup.setup_documents()
+        logger.info(f"✅ 知识库自动设置成功，处理了 {len(processed_docs)} 个文档块")
+        return len(processed_docs) > 0
+    except Exception as e:
+        logger.error(f"知识库自动设置失败: {e}")
+        return False

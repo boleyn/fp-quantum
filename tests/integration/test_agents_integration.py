@@ -21,7 +21,7 @@ from agents.standards.cosmic.cfp_calculator import COSMICCFPCalculatorAgent
 from agents.output.report_generator import ReportGeneratorAgent
 
 from models.project_models import ProjectInfo, EstimationStrategy
-from models.nesma_models import NESMAFunctionType, ComplexityLevel
+from models.nesma_models import NESMAFunctionType, NESMAComplexityLevel
 from models.cosmic_models import COSMICDataMovementType
 
 
@@ -108,7 +108,7 @@ class TestAgentsIntegration:
             complexity_results.append(result)
         
         assert len(complexity_results) > 0
-        assert all(result["complexity"] in [c.value for c in ComplexityLevel] 
+        assert all(result["complexity"] in [c.value for c in NESMAComplexityLevel] 
                   for result in complexity_results)
         
         # 5. NESMA UFP计算

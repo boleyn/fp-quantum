@@ -17,7 +17,7 @@ from agents.base.base_agent import SpecializedAgent
 from agents.knowledge.rule_retriever import RuleRetrieverAgent
 from models.nesma_models import (
     NESMAFunctionType, NESMAFunctionClassification,
-    ComplexityLevel, NESMAComplexityResult
+    NESMAComplexityLevel, NESMAComplexityCalculation
 )
 from models.common_models import ConfidenceLevel
 from config.settings import get_settings
@@ -107,7 +107,7 @@ class NESMAUFPCalculatorAgent(SpecializedAgent):
     
     async def calculate_ufp(
         self, 
-        complexity_results: List[NESMAComplexityResult]
+        complexity_results: List[NESMAComplexityCalculation]
     ) -> Dict[str, Any]:
         """计算项目的总UFP"""
         
@@ -158,7 +158,7 @@ class NESMAUFPCalculatorAgent(SpecializedAgent):
     async def calculate_function_points(
         self,
         classification: NESMAFunctionClassification,
-        complexity_result: NESMAComplexityResult
+        complexity_result: NESMAComplexityCalculation
     ) -> Dict[str, Any]:
         """计算单个功能的功能点"""
         
@@ -198,7 +198,7 @@ class NESMAUFPCalculatorAgent(SpecializedAgent):
     async def validate_ufp_calculation(
         self,
         ufp_result: Dict[str, Any],
-        complexity_results: List[NESMAComplexityResult]
+        complexity_results: List[NESMAComplexityCalculation]
     ) -> Dict[str, Any]:
         """验证UFP计算结果"""
         
@@ -264,7 +264,7 @@ class NESMAUFPCalculatorAgent(SpecializedAgent):
     
     async def _calculate_single_function_points(
         self, 
-        complexity_result: NESMAComplexityResult
+        complexity_result: NESMAComplexityCalculation
     ) -> Dict[str, Any]:
         """计算单个功能的功能点"""
         
@@ -346,7 +346,7 @@ class NESMAUFPCalculatorAgent(SpecializedAgent):
     async def _calculate_quality_metrics(
         self,
         function_point_details: List[Dict[str, Any]],
-        complexity_results: List[NESMAComplexityResult]
+        complexity_results: List[NESMAComplexityCalculation]
     ) -> Dict[str, Any]:
         """计算质量指标"""
         
@@ -689,20 +689,24 @@ if __name__ == "__main__":
         
         # 测试复杂度结果
         test_complexity_results = [
-            NESMAComplexityResult(
+            NESMAComplexityCalculation(
                 function_id="func_001",
                 function_type=NESMAFunctionType.ILF,
-                complexity=ComplexityLevel.AVERAGE,
                 det_count=8,
                 ret_count=1,
+                complexity=NESMAComplexityLevel.AVERAGE,
+                complexity_matrix_used="ILF_test_matrix",
+                calculation_steps=["test step 1", "test step 2"],
                 calculation_details={"confidence_score": 0.9}
             ),
-            NESMAComplexityResult(
+            NESMAComplexityCalculation(
                 function_id="func_002",
                 function_type=NESMAFunctionType.EI,
-                complexity=ComplexityLevel.LOW,
                 det_count=5,
                 ret_count=1,
+                complexity=NESMAComplexityLevel.LOW,
+                complexity_matrix_used="EI_test_matrix",
+                calculation_steps=["test step 1", "test step 2"],
                 calculation_details={"confidence_score": 0.8}
             )
         ]

@@ -16,16 +16,17 @@ class DatabaseConfig(BaseSettings):
     """数据库配置"""
     
     # PostgreSQL配置 (PG Vector)
-    postgres_host: str = Field(default="localhost", env="POSTGRES_HOST")
+    postgres_host: str = Field(default="10.21.8.6", env="POSTGRES_HOST")
     postgres_port: int = Field(default=5432, env="POSTGRES_PORT")
-    postgres_db: str = Field(default="fp_quantum_vectors", env="POSTGRES_DB")
+    postgres_database: str = Field(default="fp_quantum", env="POSTGRES_DATABASE")
+    postgres_db: str = Field(default="fp_quantum", env="POSTGRES_DB")  # 向后兼容
     postgres_user: str = Field(default="vector_user", env="POSTGRES_USER")
     postgres_password: str = Field(env="POSTGRES_PASSWORD")
     postgres_pool_size: int = Field(default=5, env="POSTGRES_POOL_SIZE")
     postgres_max_overflow: int = Field(default=10, env="POSTGRES_MAX_OVERFLOW")
     
     # MongoDB配置
-    mongodb_host: str = Field(default="localhost", env="MONGODB_HOST")
+    mongodb_host: str = Field(default="10.21.8.6", env="MONGODB_HOST")
     mongodb_port: int = Field(default=27017, env="MONGODB_PORT")
     mongodb_db: str = Field(default="fp_quantum", env="MONGODB_DB")
     mongodb_user: str = Field(default="fp_user", env="MONGODB_USER")
@@ -41,12 +42,12 @@ class DatabaseConfig(BaseSettings):
     @property
     def postgres_url(self) -> str:
         """PostgreSQL连接URL"""
-        return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        return f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_database}"
     
     @property
     def postgres_async_url(self) -> str:
         """PostgreSQL异步连接URL"""
-        return f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        return f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_database}"
     
     @property
     def mongodb_url(self) -> str:
@@ -71,32 +72,32 @@ class LLMConfig(BaseSettings):
     openai_api_key: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
     
     # 编排者模型配置 (DeepSeek-R1)
-    orchestrator_model: str = Field(default="deepseek-reasoner", env="ORCHESTRATOR_MODEL")
+    orchestrator_model: str = Field(default="deepseek-r1-250528", env="ORCHESTRATOR_MODEL")
     orchestrator_temperature: float = Field(default=0.1, env="ORCHESTRATOR_TEMPERATURE")
     orchestrator_max_tokens: int = Field(default=8000, env="ORCHESTRATOR_MAX_TOKENS")
     orchestrator_thinking_budget: int = Field(default=30000, env="ORCHESTRATOR_THINKING_BUDGET")
     orchestrator_timeout: int = Field(default=60, env="ORCHESTRATOR_TIMEOUT")
     
     # 执行者模型配置 (DeepSeek-V3)
-    worker_model: str = Field(default="deepseek-chat", env="WORKER_MODEL")
+    worker_model: str = Field(default="deepseek-v3-250324", env="WORKER_MODEL")
     worker_temperature: float = Field(default=0.1, env="WORKER_TEMPERATURE")
-    worker_max_tokens: int = Field(default=4000, env="WORKER_MAX_TOKENS")
+    worker_max_tokens: int = Field(default=128000, env="WORKER_MAX_TOKENS")
     worker_parallel_limit: int = Field(default=5, env="WORKER_PARALLEL_LIMIT")
     worker_timeout: int = Field(default=30, env="WORKER_TIMEOUT")
     
     # 向量模型配置 (BGE-M3)
-    embedding_model: str = Field(default="bge-m3", env="EMBEDDING_MODEL")
-    embedding_max_tokens: int = Field(default=8192, env="EMBEDDING_MAX_TOKENS")
+    embedding_model: str = Field(default="BAAI/bge-m3", env="EMBEDDING_MODEL")
+    embedding_max_tokens: int = Field(default=8000, env="EMBEDDING_MAX_TOKENS")
     embedding_dimensions: int = Field(default=1024, env="EMBEDDING_DIMENSIONS")
     embedding_batch_size: int = Field(default=100, env="EMBEDDING_BATCH_SIZE")
     embedding_timeout: int = Field(default=30, env="EMBEDDING_TIMEOUT")
 
 
 class VectorStoreConfig(BaseSettings):
-    """向量存储配置"""
+    """向量存储配置 - 统一使用PgVector"""
     
-    # 向量存储提供商
-    provider: str = Field(default="pgvector", env="VECTOR_STORE_PROVIDER")  # pgvector, mongodb_atlas, chroma
+    # 向量存储提供商 - 只支持PgVector
+    provider: str = Field(default="pgvector", env="VECTOR_STORE_PROVIDER")
     table_name: str = Field(default="knowledge_embeddings", env="VECTOR_TABLE_NAME")
     vector_dimension: int = Field(default=1024, env="VECTOR_DIMENSION")
     index_type: str = Field(default="ivfflat", env="VECTOR_INDEX_TYPE")  # ivfflat, hnsw
@@ -104,9 +105,8 @@ class VectorStoreConfig(BaseSettings):
     
     @validator('provider')
     def validate_provider(cls, v):
-        allowed_providers = ['pgvector', 'mongodb_atlas', 'chroma']
-        if v not in allowed_providers:
-            raise ValueError(f'provider must be one of {allowed_providers}')
+        if v != 'pgvector':
+            raise ValueError('仅支持 pgvector 作为向量存储提供商')
         return v
 
 
