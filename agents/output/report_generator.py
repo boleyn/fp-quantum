@@ -483,12 +483,10 @@ class ReportGeneratorAgent(SpecializedAgent):
         quality_assessment: QualityAssessment
     ) -> str:
         try:
-            import pandas as pd
             from openpyxl import Workbook
-            from openpyxl.styles import Font
+            from openpyxl.styles import Font, PatternFill, Alignment
             import tempfile
             import os
-            
             wb = Workbook()
             wb.remove(wb.active)
             # 1. 执行摘要
@@ -512,12 +510,54 @@ class ReportGeneratorAgent(SpecializedAgent):
             ws_summary['A10'].font = Font(bold=True, size=14)
             for i, finding in enumerate(executive_summary.key_findings, 11):
                 ws_summary[f'A{i}'] = f"• {finding}"
-            # 2. 各章节内容
+            # 2. NESMA功能点明细表格
             for section in sorted(sections, key=lambda x: x.order):
-                ws = wb.create_sheet(section.title[:20])
-                ws['A1'] = section.title
-                ws['A1'].font = Font(bold=True, size=16)
-                ws['A2'] = section.content
+                if "NESMA" in section.title:
+                    ws = wb.create_sheet("NESMA明细表")
+                    # 表头
+                    headers = [
+                        "编号", "子系统", "一级模块", "二级模块", "三级模块", "功能点计数项名称", "类别", "UFP", "重用程度", "修改类型", "AFP", "备注"
+                    ]
+                    ws.append(headers)
+                    # 表头样式
+                    for col in range(1, len(headers)+1):
+                        cell = ws.cell(row=1, column=col)
+                        cell.font = Font(bold=True)
+                        cell.fill = PatternFill("solid", fgColor="B7B7B7")
+                        cell.alignment = Alignment(horizontal="center", vertical="center")
+                    # 获取功能点明细
+                    nesma_results = section.metadata.get('nesma_results') if hasattr(section, 'metadata') else None
+                    total_ufp = 0
+                    total_afp = 0.0
+                    if nesma_results and 'function_classifications' in nesma_results:
+                        classifications = nesma_results['function_classifications']
+                        for idx, item in enumerate(classifications, 1):
+                            ufp = getattr(item, 'ufp', 0) or 0
+                            afp = getattr(item, 'afp', 0.0) or 0.0
+                            total_ufp += ufp
+                            total_afp += afp
+                            ws.append([
+                                idx,
+                                getattr(item, 'subsystem', ""),
+                                getattr(item, 'module1', ""),
+                                getattr(item, 'module2', ""),
+                                getattr(item, 'module3', ""),
+                                getattr(item, 'function_name', ""),
+                                getattr(item, 'function_type', ""),
+                                ufp,
+                                getattr(item, 'reuse_level', ""),
+                                getattr(item, 'change_type', ""),
+                                afp,
+                                getattr(item, 'remark', "")
+                            ])
+                    # 合计行
+                    sum_row = ["合计:", "", "", "", "", "", "", total_ufp, "", "", total_afp, ""]
+                    ws.append(sum_row)
+                    for col in range(1, len(headers)+1):
+                        cell = ws.cell(row=ws.max_row, column=col)
+                        cell.font = Font(bold=True)
+                        cell.fill = PatternFill("solid", fgColor="E2EFDA")
+                        cell.alignment = Alignment(horizontal="center", vertical="center")
             # 3. 质量评估
             ws_quality = wb.create_sheet("质量评估")
             ws_quality['A1'] = "质量评估报告"
@@ -544,7 +584,6 @@ class ReportGeneratorAgent(SpecializedAgent):
                 for idx, chart in enumerate(visualizations, 2):
                     ws_vis[f'A{idx}'] = chart.title
                     ws_vis[f'B{idx}'] = str(chart.data)
-            # 保存文件
             with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
                 wb.save(tmp.name)
                 return tmp.name
