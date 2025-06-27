@@ -482,100 +482,72 @@ class ReportGeneratorAgent(SpecializedAgent):
         visualizations: List[VisualizationChart],
         quality_assessment: QualityAssessment
     ) -> str:
-        """创建Excel格式内容"""
         try:
             import pandas as pd
             from openpyxl import Workbook
-            from openpyxl.styles import Font, Alignment, PatternFill
-            from openpyxl.utils.dataframe import dataframe_to_rows
+            from openpyxl.styles import Font
             import tempfile
             import os
             
-            # 创建工作簿
             wb = Workbook()
-            
-            # 删除默认工作表
             wb.remove(wb.active)
-            
-            # 1. 执行摘要工作表
+            # 1. 执行摘要
             ws_summary = wb.create_sheet("执行摘要")
             ws_summary['A1'] = "功能点估算报告 - 执行摘要"
             ws_summary['A1'].font = Font(bold=True, size=16)
-            
-            # 添加项目信息
             summary_data = [
                 ["项目名称", executive_summary.project_name],
                 ["业务领域", executive_summary.business_domain],
                 ["估算日期", executive_summary.estimation_date],
-                ["估算策略", executive_summary.estimation_strategy.value],
+                ["估算策略", str(executive_summary.estimation_strategy)],
                 ["总功能点", executive_summary.total_fp],
                 ["置信度", executive_summary.confidence_level],
                 ["估算方法", ", ".join(executive_summary.methods_used)]
             ]
-            
             for i, (key, value) in enumerate(summary_data, 2):
                 ws_summary[f'A{i}'] = key
                 ws_summary[f'B{i}'] = str(value)
                 ws_summary[f'A{i}'].font = Font(bold=True)
-            
-            # 添加关键发现
             ws_summary['A10'] = "关键发现"
             ws_summary['A10'].font = Font(bold=True, size=14)
             for i, finding in enumerate(executive_summary.key_findings, 11):
                 ws_summary[f'A{i}'] = f"• {finding}"
-            
-            # 2. NESMA分析工作表
-            nesma_section = next((s for s in sections if "NESMA" in s.title), None)
-            if nesma_section:
-                ws_nesma = wb.create_sheet("NESMA分析")
-                ws_nesma['A1'] = "NESMA功能点分析"
-                ws_nesma['A1'].font = Font(bold=True, size=16)
-                
-                # 这里可以添加NESMA详细数据
-                # 由于数据结构复杂，这里简化处理
-                ws_nesma['A3'] = "详细分析请参考报告内容"
-            
-            # 3. COSMIC分析工作表
-            cosmic_section = next((s for s in sections if "COSMIC" in s.title), None)
-            if cosmic_section:
-                ws_cosmic = wb.create_sheet("COSMIC分析")
-                ws_cosmic['A1'] = "COSMIC功能点分析"
-                ws_cosmic['A1'].font = Font(bold=True, size=16)
-                
-                # 这里可以添加COSMIC详细数据
-                ws_cosmic['A3'] = "详细分析请参考报告内容"
-            
-            # 4. 质量评估工作表
+            # 2. 各章节内容
+            for section in sorted(sections, key=lambda x: x.order):
+                ws = wb.create_sheet(section.title[:20])
+                ws['A1'] = section.title
+                ws['A1'].font = Font(bold=True, size=16)
+                ws['A2'] = section.content
+            # 3. 质量评估
             ws_quality = wb.create_sheet("质量评估")
             ws_quality['A1'] = "质量评估报告"
             ws_quality['A1'].font = Font(bold=True, size=16)
-            
             quality_data = [
                 ["完整性评分", f"{quality_assessment.completeness_score:.2f}"],
                 ["一致性评分", f"{quality_assessment.consistency_score:.2f}"],
                 ["可信度评分", f"{quality_assessment.reliability_score:.2f}"],
                 ["总体评分", f"{quality_assessment.overall_score:.2f}"]
             ]
-            
             for i, (key, value) in enumerate(quality_data, 3):
                 ws_quality[f'A{i}'] = key
                 ws_quality[f'B{i}'] = value
                 ws_quality[f'A{i}'].font = Font(bold=True)
-            
-            # 添加质量建议
             ws_quality['A8'] = "质量建议"
             ws_quality['A8'].font = Font(bold=True, size=14)
             for i, rec in enumerate(quality_assessment.recommendations, 9):
                 ws_quality[f'A{i}'] = f"• {rec}"
-            
+            # 4. 可视化
+            if visualizations:
+                ws_vis = wb.create_sheet("可视化图表")
+                ws_vis['A1'] = "图表标题"
+                ws_vis['B1'] = "数据"
+                for idx, chart in enumerate(visualizations, 2):
+                    ws_vis[f'A{idx}'] = chart.title
+                    ws_vis[f'B{idx}'] = str(chart.data)
             # 保存文件
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"功能点估算报告_{timestamp}.xlsx"
-            filepath = os.path.join(tempfile.gettempdir(), filename)
-            wb.save(filepath)
-            
-            return filepath
-            
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+                wb.save(tmp.name)
+                return tmp.name
         except ImportError:
             return "生成Excel报告需要安装openpyxl库: uv pip install openpyxl"
         except Exception as e:
@@ -588,98 +560,69 @@ class ReportGeneratorAgent(SpecializedAgent):
         visualizations: List[VisualizationChart],
         quality_assessment: QualityAssessment
     ) -> str:
-        """创建Word格式内容"""
         try:
             from docx import Document
-            from docx.shared import Inches
-            from docx.enum.text import WD_ALIGN_PARAGRAPH
-            from docx.oxml.shared import OxmlElement, qn
+            from docx.shared import Pt
             import tempfile
             import os
-            
-            # 创建文档
             doc = Document()
-            
-            # 添加标题
-            title = doc.add_heading('功能点估算报告', 0)
-            title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            
+            doc.add_heading('功能点估算报告', 0)
             # 1. 执行摘要
             doc.add_heading('执行摘要', level=1)
-            
-            # 项目信息表格
             table = doc.add_table(rows=1, cols=2)
             table.style = 'Table Grid'
             hdr_cells = table.rows[0].cells
             hdr_cells[0].text = '项目信息'
             hdr_cells[1].text = '详情'
-            
-            # 添加项目信息行
             project_info = [
                 ['项目名称', executive_summary.project_name],
                 ['业务领域', executive_summary.business_domain],
                 ['估算日期', executive_summary.estimation_date],
-                ['估算策略', executive_summary.estimation_strategy.value],
+                ['估算策略', str(executive_summary.estimation_strategy)],
                 ['总功能点', str(executive_summary.total_fp)],
                 ['置信度', executive_summary.confidence_level],
                 ['估算方法', ', '.join(executive_summary.methods_used)]
             ]
-            
             for info in project_info:
                 row_cells = table.add_row().cells
                 row_cells[0].text = info[0]
                 row_cells[1].text = info[1]
-            
-            # 关键发现
             doc.add_heading('关键发现', level=2)
             for finding in executive_summary.key_findings:
                 doc.add_paragraph(finding, style='List Bullet')
-            
-            # 2. 详细分析章节
+            # 2. 各章节内容
             for section in sorted(sections, key=lambda x: x.order):
                 doc.add_heading(section.title, level=1)
                 doc.add_paragraph(section.content)
-            
             # 3. 质量评估
             doc.add_heading('质量评估', level=1)
-            
             quality_table = doc.add_table(rows=1, cols=2)
             quality_table.style = 'Table Grid'
             quality_hdr = quality_table.rows[0].cells
             quality_hdr[0].text = '评估维度'
             quality_hdr[1].text = '评分'
-            
             quality_data = [
                 ['完整性评分', f"{quality_assessment.completeness_score:.2f}"],
                 ['一致性评分', f"{quality_assessment.consistency_score:.2f}"],
                 ['可信度评分', f"{quality_assessment.reliability_score:.2f}"],
                 ['总体评分', f"{quality_assessment.overall_score:.2f}"]
             ]
-            
             for data in quality_data:
                 row_cells = quality_table.add_row().cells
                 row_cells[0].text = data[0]
                 row_cells[1].text = data[1]
-            
-            # 质量建议
             doc.add_heading('质量建议', level=2)
             for rec in quality_assessment.recommendations:
                 doc.add_paragraph(rec, style='List Bullet')
-            
-            # 4. 可视化图表说明
+            # 4. 可视化
             if visualizations:
                 doc.add_heading('可视化图表', level=1)
                 for chart in visualizations:
-                    doc.add_paragraph(f"• {chart.title}: {chart.description}")
-            
+                    doc.add_paragraph(f"• {chart.title}: {str(chart.data)}")
             # 保存文件
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"功能点估算报告_{timestamp}.docx"
-            filepath = os.path.join(tempfile.gettempdir(), filename)
-            doc.save(filepath)
-            
-            return filepath
-            
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as tmp:
+                doc.save(tmp.name)
+                return tmp.name
         except ImportError:
             return "生成Word报告需要安装python-docx库: uv pip install python-docx"
         except Exception as e:

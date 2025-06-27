@@ -297,16 +297,14 @@ async def run_automatic_estimation(project_info: ProjectInfo):
             
             # 检查最终报告 - 使用Pydantic模型属性
             if workflow_state.final_report:
-                console.print("[green]📄 详细报告已生成[/green]")
-                
-                # 显示报告摘要 - 完全使用Pydantic模型
+                console.print("[green]�� 详细报告已生成[/green]")
                 console.print(f"[cyan]📋 报告摘要:[/cyan]")
                 
                 # 获取估算策略 - 使用Pydantic模型属性
                 selected_strategy = workflow_state.selected_strategy
                 console.print(f"  估算策略: {selected_strategy or 'unknown'}")
                 
-                # 显示各种格式的报告 - 使用Pydantic模型属性
+                # 显示各种格式的报告
                 successful_reports = []
                 
                 if workflow_state.final_report.markdown:
@@ -314,7 +312,11 @@ async def run_automatic_estimation(project_info: ProjectInfo):
                         console.print(f"  ❌ MARKDOWN格式: 生成失败 - {workflow_state.final_report.markdown.error}")
                     else:
                         successful_reports.append("markdown")
-                        console.print(f"  ✅ MARKDOWN格式: 内容已生成")
+                        file_path = workflow_state.final_report.markdown.file_path
+                        if file_path:
+                            console.print(f"  ✅ MARKDOWN格式: {file_path}")
+                        else:
+                            console.print(f"  ✅ MARKDOWN格式: 内容已生成")
                 
                 if workflow_state.final_report.excel:
                     if workflow_state.final_report.excel.error:
@@ -387,7 +389,11 @@ async def run_automatic_estimation(project_info: ProjectInfo):
                             else:
                                 successful_reports.append(format_type)
                                 if format_type == "markdown":
-                                    console.print(f"  ✅ {format_type.upper()}格式: 内容已生成")
+                                    file_path = report_data.get("file_path", "未知路径")
+                                    if file_path:
+                                        console.print(f"  ✅ {format_type.upper()}格式: {file_path}")
+                                    else:
+                                        console.print(f"  ✅ {format_type.upper()}格式: 内容已生成")
                                 else:
                                     file_path = report_data.get("file_path", "未知路径")
                                     console.print(f"  ✅ {format_type.upper()}格式: {file_path}")

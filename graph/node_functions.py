@@ -1135,21 +1135,67 @@ async def generate_report_node(state: WorkflowGraphState) -> WorkflowGraphState:
                 from graph.state_definitions import ReportContent
                 
                 if format_type == "markdown":
-                    # Markdown格式：内容直接存储在ReportData.content中
+                    # Markdown格式：内容直接存储在ReportData.content中，同时保存为文件
                     content = report_data.content if hasattr(report_data, 'content') else "报告内容生成失败"
-                    generated_reports["markdown"] = ReportContent(
-                        content=content,
-                        file_path=None,
-                        error=None
-                    )
+                    
+                    # 保存Markdown内容到项目 reports 目录
+                    import os
+                    from datetime import datetime
+                    report_dir = os.path.join(os.getcwd(), "reports")
+                    os.makedirs(report_dir, exist_ok=True)
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    filename = f"功能点估算报告_{timestamp}.md"
+                    filepath = os.path.join(report_dir, filename)
+                    try:
+                        with open(filepath, 'w', encoding='utf-8') as f:
+                            f.write(content)
+                        generated_reports["markdown"] = ReportContent(
+                            content=content,
+                            file_path=filepath,
+                            error=None
+                        )
+                    except Exception as file_error:
+                        logger.error(f"❌ 保存Markdown文件失败: {str(file_error)}")
+                        generated_reports["markdown"] = ReportContent(
+                            content=content,
+                            file_path=None,
+                            error=f"文件保存失败: {str(file_error)}"
+                        )
                 else:
                     # Excel和Word格式：内容应该是文件路径
                     content = report_data.content if hasattr(report_data, 'content') else ""
-                    generated_reports[format_type] = ReportContent(
-                        content=None,
-                        file_path=content if content and not content.startswith("生成") else None,
-                        error=content if content and content.startswith("生成") else None
-                    )
+                    # 保存到项目 reports 目录
+                    import os
+                    from datetime import datetime
+                    report_dir = os.path.join(os.getcwd(), "reports")
+                    os.makedirs(report_dir, exist_ok=True)
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    ext = ".xlsx" if format_type == "excel" else ".docx"
+                    filename = f"功能点估算报告_{timestamp}{ext}"
+                    filepath = os.path.join(report_dir, filename)
+                    try:
+                        # 如果 content 是文件路径且文件存在，则移动到 reports 目录
+                        import shutil
+                        if os.path.exists(content):
+                            shutil.move(content, filepath)
+                            generated_reports[format_type] = ReportContent(
+                                content=None,
+                                file_path=filepath,
+                                error=None
+                            )
+                        else:
+                            generated_reports[format_type] = ReportContent(
+                                content=None,
+                                file_path=None,
+                                error="报告文件未生成或路径无效"
+                            )
+                    except Exception as file_error:
+                        logger.error(f"❌ 保存{format_type.upper()}文件失败: {str(file_error)}")
+                        generated_reports[format_type] = ReportContent(
+                            content=None,
+                            file_path=None,
+                            error=f"文件保存失败: {str(file_error)}"
+                        )
                 
                 logger.info(f"✅ 成功生成 {format_type.upper()} 格式报告")
                 
