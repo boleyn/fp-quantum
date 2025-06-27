@@ -89,6 +89,8 @@ class NESMAUFPCalculatorAgent(SpecializedAgent):
     async def _execute_task(self, task_name: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
         """执行UFP计算任务"""
         if task_name == "calculate_ufp":
+            if "complexity_results" not in inputs:
+                raise KeyError(f"缺少必需的输入参数 'complexity_results'。可用的键: {list(inputs.keys())}")
             return await self.calculate_ufp(inputs["complexity_results"])
         elif task_name == "calculate_function_points":
             return await self.calculate_function_points(

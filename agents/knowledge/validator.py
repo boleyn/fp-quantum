@@ -688,22 +688,28 @@ class ValidatorAgent(SpecializedAgent):
             # 5. 生成验证结果
             is_valid = overall_quality >= self.quality_thresholds["acceptable"]
             
+            # 识别问题和建议
+            issues = self._identify_analysis_issues(analysis_type, analysis_result, {
+                "completeness": completeness_score,
+                "rationality": rationality_score,
+                "consistency": consistency_score
+            })
+            suggestions = self._generate_analysis_suggestions(analysis_type, overall_quality)
+            
             result = ValidationResult(
                 is_valid=is_valid,
                 confidence_score=overall_quality,
-                validation_details={
+                confidence_level=self._score_to_confidence_level(overall_quality),
+                errors=issues,  # 使用正确的字段名
+                warnings=[],    # 可以在需要时添加警告
+                suggestions=suggestions,
+                metadata={
                     "analysis_type": analysis_type,
                     "completeness_score": completeness_score,
                     "rationality_score": rationality_score,
                     "consistency_score": consistency_score,
                     "overall_quality": overall_quality
-                },
-                issues=self._identify_analysis_issues(analysis_type, analysis_result, {
-                    "completeness": completeness_score,
-                    "rationality": rationality_score,
-                    "consistency": consistency_score
-                }),
-                suggestions=self._generate_analysis_suggestions(analysis_type, overall_quality)
+                }
             )
             
             logger.info(f"✅ 分析结果验证完成，质量分数: {overall_quality:.3f}")
@@ -847,6 +853,54 @@ class ValidatorAgent(SpecializedAgent):
             ])
         
         return suggestions
+    
+    def _score_to_confidence_level(self, score: float) -> ConfidenceLevel:
+        """将分数转换为置信度等级"""
+        if score >= 0.8:
+            return ConfidenceLevel.VERY_HIGH
+        elif score >= 0.6:
+            return ConfidenceLevel.HIGH
+        elif score >= 0.4:
+            return ConfidenceLevel.MEDIUM
+        elif score >= 0.2:
+            return ConfidenceLevel.LOW
+        else:
+            return ConfidenceLevel.VERY_LOW
+    
+    async def _execute_task(self, task_name: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        """执行验证任务"""
+        if task_name == "validate_knowledge_retrieval":
+            result = await self.validate_knowledge_retrieval(
+                inputs["query"],
+                inputs["retrieved_docs"],
+                inputs["validation_context"]
+            )
+            return {
+                "validation_result": result,
+                "task_status": "completed"
+            }
+        elif task_name == "validate_analysis_results":
+            result = await self.validate_analysis_results(
+                inputs["analysis_type"],
+                inputs["analysis_result"],
+                inputs["context"]
+            )
+            return {
+                "validation_result": result,
+                "task_status": "completed"
+            }
+        elif task_name == "validate_estimation_consistency":
+            result = await self.validate_estimation_consistency(
+                inputs["nesma_result"],
+                inputs["cosmic_result"],
+                inputs["project_context"]
+            )
+            return {
+                "validation_result": result,
+                "task_status": "completed"
+            }
+        else:
+            raise ValueError(f"未知任务: {task_name}")
 
 
 if __name__ == "__main__":

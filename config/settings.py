@@ -62,11 +62,11 @@ class LLMConfig(BaseSettings):
     
     # DeepSeek API配置
     deepseek_api_key: str = Field(env="DEEPSEEK_API_KEY")
-    deepseek_api_base: str = Field(default="https://api.deepseek.com/v1", env="DEEPSEEK_API_BASE")
+    deepseek_api_base: str = Field(default="https://ark.cn-beijing.volces.com/api/v3", env="DEEPSEEK_API_BASE")
     
     # BGE-M3 API配置
     bge_m3_api_key: str = Field(env="BGE_M3_API_KEY")
-    bge_m3_api_base: str = Field(default="https://api.bge-provider.com/v1", env="BGE_M3_API_BASE")
+    bge_m3_api_base: str = Field(default="https://api.siliconflow.cn/v1", env="BGE_M3_API_BASE")
     
     # OpenAI API配置 (备用)
     openai_api_key: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
@@ -81,7 +81,7 @@ class LLMConfig(BaseSettings):
     # 执行者模型配置 (DeepSeek-V3)
     worker_model: str = Field(default="deepseek-v3-250324", env="WORKER_MODEL")
     worker_temperature: float = Field(default=0.1, env="WORKER_TEMPERATURE")
-    worker_max_tokens: int = Field(default=128000, env="WORKER_MAX_TOKENS")
+    worker_max_tokens: int = Field(default=12000, env="WORKER_MAX_TOKENS")
     worker_parallel_limit: int = Field(default=5, env="WORKER_PARALLEL_LIMIT")
     worker_timeout: int = Field(default=30, env="WORKER_TIMEOUT")
     
@@ -206,7 +206,7 @@ class Settings(BaseSettings):
     
     @validator('environment')
     def validate_environment(cls, v):
-        allowed_envs = ['development', 'staging', 'production']
+        allowed_envs = ['development', 'testing', 'staging', 'production']
         if v not in allowed_envs:
             raise ValueError(f'environment must be one of {allowed_envs}')
         return v
@@ -234,6 +234,42 @@ def load_config_from_file(config_file: str) -> Settings:
     return Settings(_env_file=config_file)
 
 
+def get_llm(model_type: str = "worker"):
+    """获取LLM实例
+    
+    Args:
+        model_type: 模型类型，"orchestrator" 或 "worker"
+    
+    Returns:
+        LLM实例
+    """
+    from langchain_openai import ChatOpenAI
+    
+    settings = get_settings()
+    llm_config = settings.llm
+    
+    if model_type == "orchestrator":
+        # 编排者模型 (DeepSeek-R1)
+        return ChatOpenAI(
+            api_key=llm_config.deepseek_api_key,
+            base_url=llm_config.deepseek_api_base,
+            model=llm_config.orchestrator_model,
+            temperature=llm_config.orchestrator_temperature,
+            max_tokens=llm_config.orchestrator_max_tokens,
+            timeout=llm_config.orchestrator_timeout
+        )
+    else:
+        # 执行者模型 (DeepSeek-V3)
+        return ChatOpenAI(
+            api_key=llm_config.deepseek_api_key,
+            base_url=llm_config.deepseek_api_base,
+            model=llm_config.worker_model,
+            temperature=llm_config.worker_temperature,
+            max_tokens=llm_config.worker_max_tokens,
+            timeout=llm_config.worker_timeout
+        )
+
+
 # 导出配置类和实例
 __all__ = [
     "Settings",
@@ -247,4 +283,5 @@ __all__ = [
     "settings",
     "get_settings",
     "load_config_from_file",
+    "get_llm",
 ] 

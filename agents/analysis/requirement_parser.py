@@ -13,14 +13,34 @@ import re
 from langchain_core.language_models import BaseLanguageModel
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+from pydantic import BaseModel, Field
 
 from agents.base.base_agent import SpecializedAgent
 from models.project_models import ProjectInfo, ProcessDetails
-from models.common_models import ConfidenceLevel
+from models.common_models import ConfidenceLevel, BaseEntity
+
+# 业务实体模型
+class BusinessEntity(BaseEntity):
+    """业务实体模型"""
+    name: str = Field(..., description="实体名称")
+    entity_type: str = Field(..., description="实体类型")
+    description: str = Field(..., description="实体描述")
+    attributes: List[str] = Field(default_factory=list, description="属性列表")
 from config.settings import get_settings
+import logging
 
 logger = logging.getLogger(__name__)
 
+# 结构化输出模型
+class EntityExtractionResult(BaseModel):
+    """实体提取结果模型"""
+    entities: List[Dict[str, Any]] = Field(description="提取的业务实体列表")
+    relationships: List[Dict[str, str]] = Field(description="实体关系列表")
+
+class ProcessExtractionResult(BaseModel):
+    """流程提取结果模型"""
+    processes: List[Dict[str, Any]] = Field(description="识别的业务流程列表")
 
 class RequirementParserAgent(SpecializedAgent):
     """需求解析智能体"""
@@ -348,7 +368,12 @@ class RequirementParserAgent(SpecializedAgent):
                         name=process_data.get("流程名称", f"流程{i+1}"),
                         description=process_data.get("流程描述", ""),
                         data_groups=process_data.get("涉及的数据组", []),
-                        dependencies=process_data.get("依赖关系", [])
+                        dependencies=process_data.get("依赖关系", []),
+                        inputs=process_data.get("inputs", []),
+                        outputs=process_data.get("outputs", []),
+                        business_rules=process_data.get("business_rules", []),
+                        complexity_indicators=process_data.get("complexity_indicators", {}),
+                        metadata=process_data
                     )
                     processes.append(process)
             
@@ -377,21 +402,41 @@ class RequirementParserAgent(SpecializedAgent):
         else:
             confidence_factors.append(0.7)
         
-        # 实体提取完整性
-        entity_count = sum(len(entities) for entities in business_entities.values())
-        if entity_count >= 5:
-            confidence_factors.append(0.9)
-        elif entity_count >= 2:
-            confidence_factors.append(0.7)
-        else:
-            confidence_factors.append(0.5)
+        # 🔥 修复实体提取完整性计算 - 增加类型检查
+        try:
+            if isinstance(business_entities, dict):
+                entity_count = sum(len(entities) for entities in business_entities.values())
+            elif isinstance(business_entities, list):
+                # 如果是列表，计算列表长度
+                entity_count = len(business_entities)
+            else:
+                # 其他情况，设为0
+                entity_count = 0
+            
+            if entity_count >= 5:
+                confidence_factors.append(0.9)
+            elif entity_count >= 2:
+                confidence_factors.append(0.7)
+            else:
+                confidence_factors.append(0.5)
+        except Exception as e:
+            logger.warning(f"计算实体数量时出错: {e}, business_entities类型: {type(business_entities)}")
+            confidence_factors.append(0.5)  # 默认值
         
         # 业务流程识别
-        process_count = len(business_processes)
-        if process_count >= 1:
-            confidence_factors.append(0.8)
-        else:
-            confidence_factors.append(0.4)
+        try:
+            if isinstance(business_processes, list):
+                process_count = len(business_processes)
+            else:
+                process_count = 0
+            
+            if process_count >= 1:
+                confidence_factors.append(0.8)
+            else:
+                confidence_factors.append(0.4)
+        except Exception as e:
+            logger.warning(f"计算流程数量时出错: {e}, business_processes类型: {type(business_processes)}")
+            confidence_factors.append(0.4)  # 默认值
         
         return sum(confidence_factors) / len(confidence_factors) if confidence_factors else 0.5
     
@@ -521,6 +566,163 @@ class RequirementParserAgent(SpecializedAgent):
             "max_confidence": max(confidence_scores),
             "recent_parsing": self.parsing_history[-5:]  # 最近5次解析
         }
+
+    async def extract_business_entities(
+        self,
+        requirement_text: str,
+        context: Optional[Dict[str, Any]] = None
+    ) -> List[BusinessEntity]:
+        """从需求文本中提取业务实体"""
+        
+        # 定义实体提取工具
+        @tool
+        def extract_entities(
+            entities: List[Dict[str, Any]],
+            relationships: List[Dict[str, str]]
+        ) -> dict:
+            """提取业务实体和关系
+            
+            Args:
+                entities: 业务实体列表，每个实体包含name, type, description, attributes
+                relationships: 实体关系列表，每个关系包含source, target, type
+            """
+            return {
+                "entities": entities,
+                "relationships": relationships
+            }
+        
+        # 创建带工具的LLM
+        llm_with_tools = self.llm.bind_tools([extract_entities])
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """你是业务需求分析专家，专门从需求文档中提取业务实体。
+
+业务实体类型包括：
+- 数据实体：客户、订单、产品等
+- 业务对象：合同、发票、报告等  
+- 用户角色：管理员、操作员、客户等
+- 系统组件：模块、接口、服务等
+
+请使用extract_entities工具返回提取结果。"""),
+            ("human", """需求文本：
+{requirement_text}
+
+上下文信息：{context}
+
+请提取其中的业务实体和关系。""")
+        ])
+        
+        try:
+            response = await llm_with_tools.ainvoke(
+                prompt.format_messages(
+                    requirement_text=requirement_text,
+                    context=str(context) if context else "无"
+                )
+            )
+            
+            # 解析工具调用结果
+            if response.tool_calls:
+                tool_call = response.tool_calls[0]
+                result_data = tool_call["args"]
+                
+                # 转换为BusinessEntity对象
+                entities = []
+                for entity_data in result_data.get("entities", []):
+                    entity = BusinessEntity(
+                        name=entity_data.get("name", ""),
+                        entity_type=entity_data.get("type", "unknown"),
+                        description=entity_data.get("description", ""),
+                        attributes=entity_data.get("attributes", [])
+                    )
+                    entities.append(entity)
+                
+                logger.info(f"✅ 提取了 {len(entities)} 个业务实体")
+                return entities
+            else:
+                logger.warning("LLM未使用工具调用，返回空列表")
+                return []
+                
+        except Exception as e:
+            logger.error(f"❌ 业务实体提取失败: {str(e)}")
+            return []
+
+    async def identify_business_processes_with_tools(
+        self,
+        requirement_text: str,
+        entities: Optional[List[BusinessEntity]] = None
+    ) -> List[ProcessDetails]:
+        """使用工具调用方式识别业务流程"""
+        
+        # 定义流程识别工具
+        @tool
+        def identify_processes(
+            processes: List[Dict[str, Any]]
+        ) -> dict:
+            """识别业务流程
+            
+            Args:
+                processes: 业务流程列表，每个流程包含name, description, data_groups, steps, inputs, outputs
+            """
+            return {"processes": processes}
+        
+        # 创建带工具的LLM
+        llm_with_tools = self.llm.bind_tools([identify_processes])
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """你是业务分析专家，专门识别和分析业务流程。
+
+业务流程特征：
+- 有明确的触发条件和结束条件
+- 包含一系列连续的业务活动
+- 涉及特定的数据输入和输出
+- 产生明确的业务价值
+
+请识别独立的业务流程。"""),
+            ("human", """需求文档：
+{requirement_text}
+
+{entities_context}
+
+请使用identify_processes工具提取业务流程信息。""")
+        ])
+        
+        entities_context = ""
+        if entities:
+            entities_context = f"已识别的业务实体：{[e.name for e in entities]}"
+        
+        response = await llm_with_tools.ainvoke(
+            prompt.format_messages(
+                requirement_text=requirement_text,
+                entities_context=entities_context
+            )
+        )
+        
+        # 处理工具调用响应
+        if hasattr(response, 'tool_calls') and response.tool_calls:
+            processes_data = response.tool_calls[0]['args']['processes']
+            return [
+                ProcessDetails(
+                    id=f"process_{i+1:03d}",
+                    name=p.get('name', f'业务流程{i+1}'),
+                    description=p.get('description', ''),
+                    data_groups=p.get('data_groups', []),
+                    dependencies=p.get('dependencies', []),
+                    inputs=p.get('inputs', []),
+                    outputs=p.get('outputs', []),
+                    business_rules=p.get('business_rules', []),
+                    complexity_indicators=p.get('complexity_indicators', {}),
+                    metadata={
+                        'steps': p.get('steps', []),
+                        'inputs': p.get('inputs', []),
+                        'outputs': p.get('outputs', []),
+                        'source': 'tool_extraction'
+                    }
+                )
+                for i, p in enumerate(processes_data)
+            ]
+        else:
+            # 如果没有工具调用，尝试解析文本响应
+            return await self._parse_business_processes(response.content)
 
 
 # 工厂函数

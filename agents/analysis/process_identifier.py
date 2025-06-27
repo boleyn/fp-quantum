@@ -8,6 +8,7 @@ import asyncio
 from typing import Dict, Any, Optional, List, Tuple
 import logging
 from datetime import datetime
+import time
 import re
 
 from langchain_core.language_models import BaseLanguageModel
@@ -107,7 +108,7 @@ class ProcessIdentifierAgent(SpecializedAgent):
     
     async def identify_processes(
         self,
-        requirement_analysis: Dict[str, Any],
+        requirement_analysis: Any,
         project_info: ProjectInfo
     ) -> List[ProcessDetails]:
         """识别功能流程"""
@@ -144,7 +145,7 @@ class ProcessIdentifierAgent(SpecializedAgent):
     
     async def _extract_process_candidates(
         self, 
-        requirement_analysis: Dict[str, Any]
+        requirement_analysis: Any
     ) -> List[Dict[str, Any]]:
         """从需求分析结果提取流程候选"""
         
@@ -158,20 +159,39 @@ class ProcessIdentifierAgent(SpecializedAgent):
 4. 明确的输出结果
 5. 涉及的数据组
 
-请识别每个候选流程，并提供详细分析。"""),
+请识别每个候选流程，并提供详细分析。
+
+重要：输出必须是有效的JSON数组格式，每个流程对象包含以下字段：
+- name: 流程名称（不能为空或"未知"）
+- business_goal: 业务目标
+- trigger_conditions: 触发条件列表
+- main_steps: 主要步骤列表
+- input_data: 输入数据列表
+- output_results: 输出结果列表
+- involved_roles: 涉及角色列表"""),
             ("human", """需求分析结果：
 {requirement_analysis}
 
-请识别其中的功能流程候选，每个候选包含：
-- 流程名称
-- 业务目标
-- 触发条件
-- 主要步骤
-- 输入数据
-- 输出结果
-- 涉及角色
+请识别其中的功能流程候选，严格按照以下JSON格式返回：
 
-返回JSON格式的候选列表。""")
+```json
+[
+  {{
+    "name": "具体的流程名称",
+    "business_goal": "明确的业务目标描述",
+    "trigger_conditions": ["触发条件1", "触发条件2"],
+    "main_steps": ["步骤1", "步骤2", "步骤3"],
+    "input_data": ["输入数据1", "输入数据2"],
+    "output_results": ["输出结果1", "输出结果2"],
+    "involved_roles": ["角色1", "角色2"]
+  }}
+]
+```
+
+注意：
+1. 确保JSON格式正确
+2. 流程名称必须具体且有意义，不能是"未知"或空值
+3. 每个字段都要有具体内容，不能为空""")
         ])
         
         response = await self.llm.ainvoke(
@@ -189,38 +209,77 @@ class ProcessIdentifierAgent(SpecializedAgent):
     ) -> List[Dict[str, Any]]:
         """应用流程边界规则"""
         
+        logger.info(f"🔍 开始应用边界规则，候选流程数量: {len(raw_processes)}")
+        
         bounded_processes = []
         
-        for process in raw_processes:
+        for i, process in enumerate(raw_processes):
+            logger.debug(f"处理第 {i+1} 个流程: {process.get('name', '未知')}")
+            
             # 检查流程独立性
             if self._check_process_independence(process):
                 # 应用边界标识规则
                 bounded_process = await self._identify_process_boundaries(process, project_info)
                 bounded_processes.append(bounded_process)
+                logger.info(f"✅ 流程 '{process.get('name', '未知')}' 通过边界规则检查")
             else:
-                logger.warning(f"流程 '{process.get('name', '未知')}' 不满足独立性原则，跳过")
+                logger.warning(f"❌ 流程 '{process.get('name', '未知')}' 不满足独立性原则，跳过")
         
+        logger.info(f"✅ 边界规则应用完成，有效流程数量: {len(bounded_processes)}")
         return bounded_processes
     
     def _check_process_independence(self, process: Dict[str, Any]) -> bool:
         """检查流程独立性"""
         
-        # 检查是否有明确的业务目标
-        if not process.get("business_goal"):
+        logger.debug(f"🔍 检查流程独立性: {process}")
+        
+        # 检查流程名称
+        name = process.get("name") or process.get("流程名称") or process.get("process_name")
+        if not name or name.strip() == "" or name == "未知":
+            logger.warning(f"流程名称为空或未知: {name}")
             return False
         
-        # 检查是否有触发条件
-        if not process.get("trigger_conditions"):
+        # 检查是否有明确的业务目标（兼容多种字段名）
+        business_goal = (process.get("business_goal") or 
+                        process.get("业务目标") or 
+                        process.get("description") or
+                        process.get("功能描述") or
+                        process.get("目标"))
+        if not business_goal:
+            logger.warning(f"流程 '{name}' 缺少业务目标")
             return False
         
-        # 检查是否有处理步骤
-        if not process.get("main_steps"):
+        # 检查是否有触发条件（兼容多种字段名）
+        trigger_conditions = (process.get("trigger_conditions") or 
+                             process.get("触发条件") or 
+                             process.get("triggers") or
+                             process.get("input") or
+                             process.get("输入条件"))
+        if not trigger_conditions:
+            logger.warning(f"流程 '{name}' 缺少触发条件")
             return False
         
-        # 检查是否有输出结果
-        if not process.get("output_results"):
+        # 检查是否有处理步骤（兼容多种字段名）
+        main_steps = (process.get("main_steps") or 
+                     process.get("主要步骤") or 
+                     process.get("steps") or
+                     process.get("处理步骤") or
+                     process.get("流程"))
+        if not main_steps:
+            logger.warning(f"流程 '{name}' 缺少处理步骤")
             return False
         
+        # 检查是否有输出结果（兼容多种字段名）
+        output_results = (process.get("output_results") or 
+                         process.get("输出结果") or 
+                         process.get("output") or
+                         process.get("结果") or
+                         process.get("outputs"))
+        if not output_results:
+            logger.warning(f"流程 '{name}' 缺少输出结果")
+            return False
+        
+        logger.info(f"✅ 流程 '{name}' 通过独立性检查")
         return True
     
     async def _identify_process_boundaries(
@@ -514,7 +573,7 @@ class ProcessIdentifierAgent(SpecializedAgent):
     async def _validate_processes(
         self,
         processes: List[Dict[str, Any]],
-        requirement_analysis: Dict[str, Any]
+        requirement_analysis: Any
     ) -> List[Dict[str, Any]]:
         """验证流程完整性"""
         
@@ -534,7 +593,7 @@ class ProcessIdentifierAgent(SpecializedAgent):
     async def _validate_single_process(
         self,
         process: Dict[str, Any],
-        requirement_analysis: Dict[str, Any]
+        requirement_analysis: Any
     ) -> Dict[str, Any]:
         """验证单个流程"""
         
@@ -587,14 +646,20 @@ class ProcessIdentifierAgent(SpecializedAgent):
     def _check_requirement_consistency(
         self,
         process: Dict[str, Any],
-        requirement_analysis: Dict[str, Any]
+        requirement_analysis: Any
     ) -> List[str]:
         """检查与需求的一致性"""
         
         issues = []
         
         # 检查功能模块一致性
-        functional_modules = requirement_analysis.get("functional_modules", [])
+        if hasattr(requirement_analysis, 'functional_modules'):
+            functional_modules = requirement_analysis.functional_modules
+        elif isinstance(requirement_analysis, dict):
+            functional_modules = requirement_analysis.get("functional_modules", [])
+        else:
+            functional_modules = []
+        
         module_names = [m.get("模块名称", "") for m in functional_modules]
         
         process_name = process.get("name", "")
@@ -636,7 +701,18 @@ class ProcessIdentifierAgent(SpecializedAgent):
                 name=process.get("name", f"流程{i+1}"),
                 description=process.get("business_goal", ""),
                 data_groups=process.get("input_data", []) + process.get("output_results", []),
-                dependencies=self._extract_dependencies(process, validated_processes)
+                dependencies=self._extract_dependencies(process, validated_processes),
+                inputs=process.get("input_data", []),
+                outputs=process.get("output_results", []),
+                business_rules=process.get("business_rules", []),
+                complexity_indicators=process.get("complexity_indicators", {}),
+                metadata={
+                    "trigger_conditions": process.get("trigger_conditions", []),
+                    "main_steps": process.get("main_steps", []),
+                    "involved_roles": process.get("involved_roles", []),
+                    "boundaries": process.get("boundaries", {}),
+                    "validation": process.get("validation", {})
+                }
             )
             
             process_details.append(detail)
@@ -666,19 +742,30 @@ class ProcessIdentifierAgent(SpecializedAgent):
         return dependencies
     
     # 辅助方法
-    def _format_requirement_analysis(self, requirement_analysis: Dict[str, Any]) -> str:
+    def _format_requirement_analysis(self, requirement_analysis: Any) -> str:
         """格式化需求分析结果"""
         
         formatted = []
         
-        if "functional_modules" in requirement_analysis:
+        # 处理RequirementAnalysis对象或字典
+        if hasattr(requirement_analysis, 'functional_modules'):
+            functional_modules = requirement_analysis.functional_modules
+            business_entities = requirement_analysis.business_entities
+        elif isinstance(requirement_analysis, dict):
+            functional_modules = requirement_analysis.get("functional_modules", [])
+            business_entities = requirement_analysis.get("business_entities", {})
+        else:
+            functional_modules = []
+            business_entities = {}
+        
+        if functional_modules:
             formatted.append("功能模块：")
-            for module in requirement_analysis["functional_modules"]:
+            for module in functional_modules:
                 formatted.append(f"- {module.get('模块名称', '未知')}: {module.get('功能描述', '')}")
         
-        if "business_entities" in requirement_analysis:
+        if business_entities:
             formatted.append("\n业务实体：")
-            for category, entities in requirement_analysis["business_entities"].items():
+            for category, entities in business_entities.items():
                 formatted.append(f"- {category}: {', '.join(entities)}")
         
         return "\n".join(formatted)
@@ -687,14 +774,21 @@ class ProcessIdentifierAgent(SpecializedAgent):
         """解析流程候选"""
         try:
             import json
+            logger.debug(f"🔍 LLM原始响应内容: {response_content}")
+            
             # 简化的JSON解析，实际应该更健壮
             if "```json" in response_content:
                 json_part = response_content.split("```json")[1].split("```")[0]
-                return json.loads(json_part)
+                parsed_result = json.loads(json_part)
+                logger.info(f"✅ 成功解析JSON，获得 {len(parsed_result)} 个流程候选")
+                return parsed_result
             else:
-                return json.loads(response_content)
+                parsed_result = json.loads(response_content)
+                logger.info(f"✅ 成功解析JSON，获得 {len(parsed_result)} 个流程候选")
+                return parsed_result
         except Exception as e:
-            logger.error(f"解析流程候选失败: {e}")
+            logger.error(f"❌ 解析流程候选失败: {e}")
+            logger.error(f"响应内容: {response_content[:500]}...")
             return []
     
     async def _parse_data_flow_analysis(self, response_content: str) -> Dict[str, Any]:
@@ -709,6 +803,38 @@ class ProcessIdentifierAgent(SpecializedAgent):
         except Exception as e:
             logger.error(f"解析数据流分析失败: {e}")
             return {}
+    
+    async def _execute_task(self, task_name: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        """执行流程识别任务"""
+        if task_name == "identify_processes":
+            processes = await self.identify_processes(
+                inputs["requirement_analysis"],
+                inputs["project_info"]
+            )
+            return {
+                "processes": processes,
+                "process_count": len(processes),
+                "task_status": "completed"
+            }
+        elif task_name == "extract_process_candidates":
+            candidates = await self._extract_process_candidates(
+                inputs["requirement_analysis"]
+            )
+            return {
+                "candidates": candidates,
+                "task_status": "completed"
+            }
+        elif task_name == "validate_processes":
+            validated = await self._validate_processes(
+                inputs["processes"],
+                inputs["requirement_analysis"]
+            )
+            return {
+                "validated_processes": validated,
+                "task_status": "completed"
+            }
+        else:
+            raise ValueError(f"未知任务: {task_name}")
 
 
 if __name__ == "__main__":

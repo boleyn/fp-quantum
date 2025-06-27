@@ -16,9 +16,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from agents.base.base_agent import SpecializedAgent
 from agents.knowledge.rule_retriever import RuleRetrieverAgent
 from models.project_models import (
-    ProjectInfo, EstimationStandard, EstimationStrategy, 
-    StandardRecommendation
+    ProjectInfo, EstimationStandard, EstimationStrategy
 )
+from graph.state_definitions import StandardRecommendation
 from models.common_models import ConfidenceLevel
 from config.settings import get_settings
 
@@ -448,12 +448,19 @@ class StandardRecommenderAgent(SpecializedAgent):
     ) -> EstimationStrategy:
         """推荐估算策略"""
         
-        if dual_necessity == "高":
-            return EstimationStrategy.DUAL_COMPARISON
-        elif dual_necessity == "中":
-            return EstimationStrategy.DUAL_PARALLEL
+        # 更倾向于单一标准，除非两个标准都很适合
+        if nesma_fit > 0.8 and cosmic_fit > 0.8:
+            # 两个标准都很适合时才推荐双标准
+            if dual_necessity == "高":
+                return EstimationStrategy.DUAL_COMPARISON
+            else:
+                return EstimationStrategy.DUAL_PARALLEL
+        elif nesma_fit > cosmic_fit + 0.1:  # NESMA明显更适合
+            return EstimationStrategy.NESMA_ONLY
+        elif cosmic_fit > nesma_fit + 0.1:  # COSMIC明显更适合
+            return EstimationStrategy.COSMIC_ONLY
         else:
-            # 选择适用性更高的单一标准
+            # 适用性相近时，选择适用性更高的
             if nesma_fit > cosmic_fit:
                 return EstimationStrategy.NESMA_ONLY
             else:
@@ -472,31 +479,42 @@ class StandardRecommenderAgent(SpecializedAgent):
         nesma_fit = await self._calculate_standard_fit_score(project_info, EstimationStandard.NESMA)
         cosmic_fit = await self._calculate_standard_fit_score(project_info, EstimationStandard.COSMIC)
         
-        if nesma_fit > 0.7 and cosmic_fit > 0.7:
-            # 两个都很适合
-            recommended_standards = [EstimationStandard.NESMA, EstimationStandard.COSMIC]
-            strategy = EstimationStrategy.DUAL_COMPARISON
+        # 更倾向于单一标准推荐
+        if nesma_fit > 0.8 and cosmic_fit > 0.8:
+            # 两个都很适合时才推荐双标准
+            recommended_standard = "NESMA+COSMIC"
             confidence_score = min(nesma_fit, cosmic_fit)
-        elif nesma_fit > cosmic_fit and nesma_fit > 0.6:
-            recommended_standards = [EstimationStandard.NESMA]
-            strategy = EstimationStrategy.NESMA_ONLY
+            alternative_standards = ["NESMA", "COSMIC"]
+        elif nesma_fit > cosmic_fit + 0.1 and nesma_fit > 0.6:
+            # NESMA明显更适合
+            recommended_standard = "NESMA"
             confidence_score = nesma_fit
-        elif cosmic_fit > nesma_fit and cosmic_fit > 0.6:
-            recommended_standards = [EstimationStandard.COSMIC]
-            strategy = EstimationStrategy.COSMIC_ONLY
+            alternative_standards = ["COSMIC"]
+        elif cosmic_fit > nesma_fit + 0.1 and cosmic_fit > 0.6:
+            # COSMIC明显更适合
+            recommended_standard = "COSMIC"
             confidence_score = cosmic_fit
+            alternative_standards = ["NESMA"]
         else:
-            # 都不太适合，推荐双标准
-            recommended_standards = [EstimationStandard.NESMA, EstimationStandard.COSMIC]
-            strategy = EstimationStrategy.DUAL_PARALLEL
-            confidence_score = max(nesma_fit, cosmic_fit)
+            # 适用性相近时，选择适用性更高的单一标准
+            if nesma_fit > cosmic_fit:
+                recommended_standard = "NESMA"
+                confidence_score = nesma_fit
+                alternative_standards = ["COSMIC"]
+            else:
+                recommended_standard = "COSMIC"
+                confidence_score = cosmic_fit
+                alternative_standards = ["NESMA"]
+        
+        # 构建推荐理由
+        reasoning = f"基于项目特征分析：NESMA适用性评分 {nesma_fit:.2f}，COSMIC适用性评分 {cosmic_fit:.2f}。"
+        reasoning += f"推荐使用 {recommended_standard} 标准进行功能点估算。"
         
         return StandardRecommendation(
-            recommended_standards=recommended_standards,
-            strategy=strategy,
+            recommended_standard=recommended_standard,
             confidence_score=confidence_score,
-            reasoning=response_content,
-            expected_differences=f"NESMA适用性: {nesma_fit:.2f}, COSMIC适用性: {cosmic_fit:.2f}"
+            reasoning=reasoning,
+            alternative_standards=alternative_standards
         )
     
     def get_recommendation_history(self) -> List[StandardRecommendation]:

@@ -17,9 +17,10 @@ from pydantic import BaseModel
 
 from config.settings import get_settings
 from models import (
-    ProjectInfo, EstimationStrategy, WorkflowState, 
+    ProjectInfo, EstimationStrategy,
     NESMAFunctionClassification, COSMICDataMovement
 )
+from graph.state_definitions import WorkflowState
 from graph.workflow_graph import FPEstimationWorkflow
 
 # 配置日志
@@ -125,6 +126,67 @@ async def health_check():
     }
 
 
+@app.post("/test/simple-estimate")
+async def test_simple_estimate():
+    """简单的估算测试端点，用于调试"""
+    logger.info("🧪 开始简单估算测试...")
+    
+    try:
+        # 创建测试项目信息
+        project_info = ProjectInfo(
+            name="测试项目",
+            description="用户注册、登录、个人信息管理、密码修改功能",
+            technology_stack=["Python", "PostgreSQL"],
+            business_domain="其他"
+        )
+        
+        logger.info(f"📋 创建测试项目: {project_info.name}")
+        
+        # 创建工作流实例
+        workflow = FPEstimationWorkflow()
+        session_id = await workflow.initialize(
+            project_info=project_info,
+            strategy=EstimationStrategy.NESMA_ONLY,  # 只使用NESMA进行测试
+            requirements=project_info.description
+        )
+        
+        logger.info(f"🆔 会话ID: {session_id}")
+        
+        # 执行工作流
+        logger.info("⚡ 开始执行工作流...")
+        final_state = await workflow.execute()
+        
+        logger.info(f"✅ 工作流执行完成，状态: {final_state.get('current_state')}")
+        
+        # 构建响应
+        response = {
+            "session_id": session_id,
+            "status": final_state.get("current_state", "UNKNOWN"),
+            "project_info": {
+                "name": project_info.name,
+                "description": project_info.description,
+                "technology_stack": project_info.technology_stack,
+                "business_domain": project_info.business_domain
+            },
+            "nesma_results": final_state.get("nesma_results"),
+            "cosmic_results": final_state.get("cosmic_results"),
+            "error_message": final_state.get("error_message"),
+            "execution_log": final_state.get("execution_log", [])
+        }
+        
+        logger.info(f"📊 返回响应: {response}")
+        return response
+        
+    except Exception as e:
+        logger.error(f"❌ 简单估算测试失败: {str(e)}")
+        logger.exception("详细错误信息:")
+        return {
+            "error": str(e),
+            "status": "FAILED",
+            "message": "简单估算测试失败"
+        }
+
+
 @app.post("/estimate", response_model=EstimationResponse)
 async def create_estimation(
     request: EstimationRequest, 
@@ -176,13 +238,31 @@ async def get_estimation_status(session_id: str):
         workflow = active_workflows[session_id]
         state = await workflow.get_current_state()
         
+        current_status = state.get("current_state", WorkflowState.STARTING)
+        
+        # 转换execution_log为字符串列表
+        execution_log_raw = state.get("execution_log", [])
+        execution_log = []
+        for log_entry in execution_log_raw:
+            if isinstance(log_entry, dict):
+                # 转换字典为可读字符串
+                timestamp = log_entry.get("timestamp", "")
+                action = log_entry.get("action", "")
+                status = log_entry.get("status", "")
+                log_str = f"[{timestamp}] {action}: {status}"
+                execution_log.append(log_str)
+            elif isinstance(log_entry, str):
+                execution_log.append(log_entry)
+            else:
+                execution_log.append(str(log_entry))
+        
         return SessionStatus(
             session_id=session_id,
-            status=state.current_state,
-            progress=calculate_progress(state.current_state),
-            current_step=state.current_state.value,
-            execution_log=state.execution_log,
-            error_message=state.error_message
+            status=current_status,
+            progress=calculate_progress(current_status),
+            current_step=current_status.value if hasattr(current_status, 'value') else str(current_status),
+            execution_log=execution_log,
+            error_message=state.get("error_message")
         )
         
     except HTTPException:
@@ -202,27 +282,29 @@ async def get_estimation_result(session_id: str):
         workflow = active_workflows[session_id]
         state = await workflow.get_current_state()
         
-        if state.current_state not in [WorkflowState.COMPLETED, WorkflowState.ERROR_ENCOUNTERED]:
+        current_status = state.get("current_state", WorkflowState.STARTING)
+        
+        if current_status not in [WorkflowState.COMPLETED, WorkflowState.ERROR_ENCOUNTERED]:
             raise HTTPException(status_code=202, detail="估算任务尚未完成")
         
         return EstimationResponse(
             session_id=session_id,
-            status=state.current_state,
-            project_info=state.project_info,
-            strategy=state.selected_strategy,
+            status=current_status,
+            project_info=state.get("project_info"),
+            strategy=state.get("selected_strategy"),
             nesma_results={
-                "classifications": [c.dict() for c in state.nesma_classifications],
-                "complexity_results": [r.dict() for r in state.nesma_complexity_results],
-                "ufp_total": state.nesma_ufp_total
-            } if state.nesma_classifications else None,
+                "classifications": [c.dict() for c in state.get("nesma_classifications", [])],
+                "complexity_results": [r.dict() for r in state.get("nesma_complexity_results", [])],
+                "ufp_total": state.get("nesma_ufp_total")
+            } if state.get("nesma_classifications") else None,
             cosmic_results={
-                "functional_users": [u.dict() for u in state.cosmic_functional_users],
-                "data_movements": [m.dict() for m in state.cosmic_data_movements],
-                "cfp_total": state.cosmic_cfp_total
-            } if state.cosmic_data_movements else None,
-            comparison_analysis=state.comparison_analysis,
-            final_report=state.final_report,
-            error_message=state.error_message
+                "functional_users": [u.dict() for u in state.get("cosmic_functional_users", [])],
+                "data_movements": [m.dict() for m in state.get("cosmic_data_movements", [])],
+                "cfp_total": state.get("cosmic_cfp_total")
+            } if state.get("cosmic_data_movements") else None,
+            comparison_analysis=state.get("comparison_analysis"),
+            final_report=state.get("final_report"),
+            error_message=state.get("error_message")
         )
         
     except HTTPException:
@@ -261,11 +343,14 @@ async def list_active_sessions():
         sessions = []
         for session_id, workflow in active_workflows.items():
             state = await workflow.get_current_state()
+            current_status = state.get("current_state", WorkflowState.STARTING)
+            project_info = state.get("project_info")
+            
             sessions.append({
                 "session_id": session_id,
-                "project_name": state.project_info.name,
-                "status": state.current_state.value,
-                "progress": calculate_progress(state.current_state)
+                "project_name": project_info.name if project_info else "未知项目",
+                "status": current_status.value if hasattr(current_status, 'value') else str(current_status),
+                "progress": calculate_progress(current_status)
             })
         
         return {"active_sessions": sessions, "total": len(sessions)}
@@ -283,7 +368,8 @@ async def execute_workflow(session_id: str, workflow: FPEstimationWorkflow):
         # 执行工作流
         final_state = await workflow.execute()
         
-        logger.info(f"工作流执行完成: {session_id}, 状态: {final_state.current_state}")
+        final_status = final_state.get("current_state", "UNKNOWN") if isinstance(final_state, dict) else "COMPLETED"
+        logger.info(f"工作流执行完成: {session_id}, 状态: {final_status}")
         
     except Exception as e:
         logger.error(f"工作流执行失败: {session_id}, 错误: {e}")

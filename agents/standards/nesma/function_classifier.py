@@ -8,10 +8,14 @@ import asyncio
 from typing import Dict, Any, Optional, List
 import logging
 from datetime import datetime
+from pathlib import Path
 
 from langchain_core.language_models import BaseLanguageModel
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+from langchain_core.output_parsers import PydanticOutputParser
+from pydantic import BaseModel, Field
 
 from agents.base.base_agent import SpecializedAgent
 from agents.knowledge.rule_retriever import RuleRetrieverAgent
@@ -19,10 +23,20 @@ from models.nesma_models import (
     NESMAFunctionType, NESMAFunctionClassification
 )
 from models.project_models import ProcessDetails
-from models.common_models import ConfidenceLevel
+from models.common_models import ConfidenceLevel, ValidationResult
 from config.settings import get_settings
+import logging
 
 logger = logging.getLogger(__name__)
+
+# 结构化输出模型
+class FunctionClassificationResult(BaseModel):
+    """功能分类结果的结构化输出模型"""
+    function_type: str = Field(description="功能类型：ILF、EIF、EI、EO、EQ之一")
+    confidence_score: float = Field(description="置信度分数，0.0-1.0之间", ge=0.0, le=1.0)
+    justification: str = Field(description="详细的分类理由")
+    key_indicators: List[str] = Field(description="关键指标列表")
+    rules_applied: List[str] = Field(description="应用的规则列表")
 
 
 class NESMAFunctionClassifierAgent(SpecializedAgent):
@@ -222,6 +236,8 @@ class NESMAFunctionClassifierAgent(SpecializedAgent):
                 # 创建失败的分类记录
                 failed_classification = NESMAFunctionClassification(
                     function_id=func_info.get("id", "unknown"),
+                    function_name=func_info.get("name", "未知功能"),  # 添加function_name
+                    function_description=func_info.get("description", ""),  # 添加function_description
                     function_type=NESMAFunctionType.EI,  # 默认类型
                     confidence_score=0.0,
                     justification=f"分类失败: {str(e)}",
@@ -317,7 +333,14 @@ class NESMAFunctionClassifierAgent(SpecializedAgent):
             )
             
             if result and result.retrieved_chunks:
-                return [chunk.content for chunk in result.retrieved_chunks]
+                # 处理不同类型的chunk格式（字典或对象）
+                def get_chunk_content(chunk):
+                    if isinstance(chunk, dict):
+                        return chunk.get('content', '')
+                    else:
+                        return getattr(chunk, 'content', '')
+                
+                return [get_chunk_content(chunk) for chunk in result.retrieved_chunks]
             
         except Exception as e:
             logger.warning(f"NESMA规则检索失败: {str(e)}")
@@ -331,6 +354,35 @@ class NESMAFunctionClassifierAgent(SpecializedAgent):
         nesma_rules: List[str]
     ) -> NESMAFunctionClassification:
         """使用LLM进行功能分类"""
+        
+        # 定义分类工具
+        @tool
+        def classify_nesma_function(
+            function_type: str,
+            confidence_score: float,
+            justification: str,
+            key_indicators: List[str],
+            rules_applied: List[str]
+        ) -> dict:
+            """对功能进行NESMA分类
+            
+            Args:
+                function_type: 功能类型，必须是ILF、EIF、EI、EO、EQ之一
+                confidence_score: 置信度分数，0.0-1.0之间
+                justification: 详细的分类理由
+                key_indicators: 关键指标列表
+                rules_applied: 应用的规则列表
+            """
+            return {
+                "function_type": function_type,
+                "confidence_score": confidence_score,
+                "justification": justification,
+                "key_indicators": key_indicators,
+                "rules_applied": rules_applied
+            }
+        
+        # 创建带工具的LLM
+        llm_with_tools = self.llm.bind_tools([classify_nesma_function])
         
         prompt = ChatPromptTemplate.from_messages([
             ("system", """你是NESMA功能点分类专家，需要将功能分类为以下五种类型之一：
@@ -347,7 +399,7 @@ EQ (External Query): 外部查询 - 检索数据进行展示
 3. 区分数据维护和数据检索
 4. 考虑跨应用边界的特征
 
-请返回JSON格式的分类结果。"""),
+请使用classify_nesma_function工具返回分类结果。"""),
             ("human", """功能描述：{function_description}
 
 流程上下文：{process_context}
@@ -355,23 +407,14 @@ EQ (External Query): 外部查询 - 检索数据进行展示
 NESMA规则参考：
 {nesma_rules}
 
-请对此功能进行NESMA分类，并说明分类理由。
-
-返回格式：
-{{
-  "function_type": "ILF|EIF|EI|EO|EQ",
-  "confidence_score": 0.95,
-  "justification": "详细的分类理由",
-  "key_indicators": ["关键指标1", "关键指标2"],
-  "rules_applied": ["应用的规则1", "应用的规则2"]
-}}""")
+请对此功能进行NESMA分类。""")
         ])
         
         process_context = ""
         if process_details:
             process_context = f"流程名称: {process_details.name}\n流程描述: {process_details.description}\n数据组: {process_details.data_groups}"
         
-        response = await self.llm.ainvoke(
+        response = await llm_with_tools.ainvoke(
             prompt.format_messages(
                 function_description=function_description,
                 process_context=process_context,
@@ -379,11 +422,33 @@ NESMA规则参考：
             )
         )
         
-        # 解析LLM响应
-        return await self._parse_classification_response(
-            response.content, 
-            function_description
-        )
+        # 解析工具调用结果
+        if response.tool_calls:
+            tool_call = response.tool_calls[0]
+            result_data = tool_call["args"]
+            
+            # 验证功能类型
+            function_type_str = result_data.get("function_type", "EI")
+            try:
+                function_type = NESMAFunctionType(function_type_str)
+            except ValueError:
+                logger.warning(f"无效的功能类型: {function_type_str}，使用默认值EI")
+                function_type = NESMAFunctionType.EI
+            
+            return NESMAFunctionClassification(
+                function_id="auto_generated",
+                function_name=f"{function_type.value}功能",
+                function_description=function_description,
+                function_type=function_type,
+                confidence_score=result_data.get("confidence_score", 0.7),
+                justification=result_data.get("justification", "LLM工具调用分类"),
+                rules_applied=result_data.get("rules_applied", ["NESMA基础规则"]),
+                classification_confidence=result_data.get("confidence_score", 0.7)
+            )
+        else:
+            # 如果没有工具调用，使用保守分类
+            logger.warning("LLM未使用工具调用，使用保守分类")
+            return await self._conservative_classify(function_description)
     
     async def _validate_classification_result(
         self,
@@ -437,6 +502,8 @@ NESMA规则参考：
         
         return NESMAFunctionClassification(
             function_id="auto_generated",
+            function_name=f"{function_type.value}功能",
+            function_description=function_description,
             function_type=function_type,
             confidence_score=0.6,  # 保守的置信度
             justification=justification,
@@ -617,32 +684,9 @@ NESMA规则参考：
         response_content: str, 
         function_description: str
     ) -> NESMAFunctionClassification:
-        """解析LLM分类响应"""
-        
-        try:
-            import json
-            # 尝试解析JSON响应
-            if "```json" in response_content:
-                json_start = response_content.find("```json") + 7
-                json_end = response_content.find("```", json_start)
-                json_content = response_content[json_start:json_end].strip()
-            else:
-                json_content = response_content
-            
-            result = json.loads(json_content)
-            
-            return NESMAFunctionClassification(
-                function_id="auto_generated",
-                function_type=NESMAFunctionType(result["function_type"]),
-                confidence_score=float(result.get("confidence_score", 0.8)),
-                justification=result.get("justification", ""),
-                rules_applied=result.get("rules_applied", [])
-            )
-            
-        except Exception as e:
-            logger.warning(f"解析LLM响应失败: {str(e)}")
-            # 回退到保守分类
-            return await self._conservative_classify(function_description)
+        """解析分类响应 - 已废弃，保留用于兼容性"""
+        logger.warning("使用已废弃的JSON解析方法，建议使用工具调用")
+        return await self._conservative_classify(function_description)
     
     def get_classification_history(self) -> List[NESMAFunctionClassification]:
         """获取分类历史"""

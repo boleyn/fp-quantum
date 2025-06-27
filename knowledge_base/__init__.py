@@ -41,6 +41,8 @@ from .loaders.web_loader import (
     load_web_knowledge_base,
     WEB_SOURCES
 )
+from .retrievers.multi_query_retriever import NESMAMultiQueryRetriever, COSMICMultiQueryRetriever
+from .vector_stores import HybridSearchStrategy, AdaptiveHybridSearch
 
 # 向量存储相关导入 - 统一使用PgVector
 from .vector_stores.pgvector_store import (
@@ -65,10 +67,7 @@ from .retrievers.keyword_retriever import (
 # 嵌入模型
 from .embeddings.embedding_models import (
     get_embedding_model,
-    get_default_embedding_model,
-    get_embedding_manager,
-    EmbeddingModelManager,
-    test_embedding_model
+    get_default_embedding_model
 )
 
 # 自动设置
@@ -107,8 +106,8 @@ __all__ = [
     
     # RAG链
     "RAGChainBuilder",
-    "NESMARagChain",
-    "COSMIRagChain",
+    "RAGChainFactory",
+    "setup_default_rag_system",
     
     # 自动设置
     "auto_setup_knowledge_base",
@@ -148,8 +147,7 @@ async def quick_setup_rag(
 
 def get_available_models():
     """获取可用的嵌入模型列表"""
-    manager = get_embedding_manager()
-    return manager.get_available_models()
+    return ["BGE-M3"]
 
 
 def get_supported_formats():

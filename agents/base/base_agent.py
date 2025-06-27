@@ -80,7 +80,7 @@ class BaseAgent(ABC):
             api_key=self.settings.llm.deepseek_api_key,
             base_url=self.settings.llm.deepseek_api_base,
             temperature=0.1,
-            max_tokens=4000,
+            max_tokens=self.settings.llm.worker_max_tokens,
             timeout=self.config.timeout_seconds
         )
     
@@ -110,7 +110,7 @@ class BaseAgent(ABC):
                     return self.cache[cache_key]
             
             # 设置状态
-            self.status = ProcessingStatus.PROCESSING
+            self.status = ProcessingStatus.IN_PROGRESS
             
             # 执行具体任务
             result = await self._execute_task(task_name, inputs)
@@ -139,12 +139,12 @@ class BaseAgent(ABC):
             # 错误处理
             execution_time = time.time() - start_time
             self.total_execution_time += execution_time
-            self.status = ProcessingStatus.ERROR
+            self.status = ProcessingStatus.FAILED
             
             error_info = ErrorInfo(
+                error_code=f"AGENT_{type(e).__name__.upper()}",
                 error_type=type(e).__name__,
-                error_message=str(e),
-                occurred_at=datetime.now()
+                error_message=str(e)
             )
             self.error_info = error_info
             
@@ -175,11 +175,10 @@ class BaseAgent(ABC):
             return
         
         log_entry = ExecutionLog(
-            step_name=step_name,
-            agent_id=self.agent_id,
-            session_id=self.session_id,
-            timestamp=datetime.now(),
-            details=details
+            step=step_name,
+            status=ProcessingStatus.COMPLETED,
+            agent_name=self.agent_id,
+            result=details
         )
         
         self.execution_logs.append(log_entry)

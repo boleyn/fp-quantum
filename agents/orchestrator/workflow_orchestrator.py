@@ -15,10 +15,9 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from agents.base.base_agent import BaseAgent
 from models.project_models import (
-    ProjectInfo, EstimationStrategy, StandardRecommendation, 
-    ProcessDetails
+    ProjectInfo, EstimationStrategy, ProcessDetails
 )
-from graph.state_definitions import WorkflowState
+from graph.state_definitions import WorkflowState, StandardRecommendation
 from models.common_models import ProcessingStatus, ConfidenceLevel
 from config.settings import get_settings
 
@@ -324,11 +323,10 @@ COSMIC适用场景：
         """解析标准推荐"""
         # 简化实现，实际可以使用更复杂的解析逻辑
         return StandardRecommendation(
-            recommended_standards=["NESMA", "COSMIC"],
-            strategy=EstimationStrategy.DUAL_COMPARISON,
+            recommended_standard="NESMA+COSMIC",
             confidence_score=0.8,
             reasoning=response_content,
-            expected_differences="NESMA可能偏高10-15%，COSMIC更贴近实际"
+            alternative_standards=["NESMA", "COSMIC"]
         )
     
     async def _parse_recovery_strategy(
