@@ -1131,94 +1131,69 @@ async def generate_report_node(state: WorkflowGraphState) -> WorkflowGraphState:
                     format=format_type
                 )
                 
-                # 将ReportContent转换为Pydantic模型
+                # 将ReportData转换为ReportContent格式
                 from graph.state_definitions import ReportContent
+                
                 if format_type == "markdown":
+                    # Markdown格式：内容直接存储在ReportData.content中
+                    content = report_data.content if hasattr(report_data, 'content') else "报告内容生成失败"
                     generated_reports["markdown"] = ReportContent(
-                        content=report_data.get("content"),
-                        file_path=report_data.get("file_path"),
-                        error=report_data.get("error")
+                        content=content,
+                        file_path=None,
+                        error=None
                     )
-                elif format_type == "excel":
-                    generated_reports["excel"] = ReportContent(
-                        content=report_data.get("content"),
-                        file_path=report_data.get("file_path"),
-                        error=report_data.get("error")
-                    )
-                elif format_type == "word":
-                    generated_reports["word"] = ReportContent(
-                        content=report_data.get("content"),
-                        file_path=report_data.get("file_path"),
-                        error=report_data.get("error")
+                else:
+                    # Excel和Word格式：内容应该是文件路径
+                    content = report_data.content if hasattr(report_data, 'content') else ""
+                    generated_reports[format_type] = ReportContent(
+                        content=None,
+                        file_path=content if content and not content.startswith("生成") else None,
+                        error=content if content and content.startswith("生成") else None
                     )
                 
-                logger.info(f"✅ {format_type.upper()}格式报告生成完成")
+                logger.info(f"✅ 成功生成 {format_type.upper()} 格式报告")
                 
             except Exception as e:
-                logger.error(f"❌ {format_type.upper()}格式报告生成失败: {str(e)}")
-                # 创建错误报告
-                from graph.state_definitions import ReportContent
+                logger.error(f"❌ 生成 {format_type.upper()} 格式报告失败: {str(e)}")
                 generated_reports[format_type] = ReportContent(
                     content=None,
                     file_path=None,
-                    error=str(e)
+                    error=f"生成失败: {str(e)}"
                 )
         
-        # 创建FinalReport Pydantic模型
+        # 创建FinalReport对象
         from graph.state_definitions import FinalReport
         final_report = FinalReport(
             markdown=generated_reports.get("markdown"),
             excel=generated_reports.get("excel"),
-            word=generated_reports.get("word")
+            word=generated_reports.get("word"),
+            generated_at=datetime.utcnow()
         )
         
         # 更新状态
         state.final_report = final_report
         
-        # 记录执行时间
-        execution_time = int((time.time() - start_time) * 1000)
+        # 记录执行日志
         state = update_execution_log(
             state,
-            "report_generator",
-            "generate_final_report",
-            "success",
-            execution_time,
-            {"formats_generated": list(generated_reports.keys())}
+            agent_id="report_generator",
+            action="generate_final_report",
+            status="success",
+            details={
+                "formats_generated": list(generated_reports.keys()),
+                "total_duration_ms": int((time.time() - start_time) * 1000),
+                "successful_formats": [fmt for fmt, report in generated_reports.items() if not report.error],
+                "failed_formats": [fmt for fmt, report in generated_reports.items() if report.error]
+            }
         )
         
-        logger.info(f"📄 报告生成完成，耗时: {execution_time}ms")
-        
-        return state
+        logger.info("✅ 最终报告生成完成")
+        return transition_state(state, WorkflowState.COMPLETED, "报告生成成功")
         
     except Exception as e:
         logger.error(f"❌ 报告生成失败: {str(e)}")
-        
-        # 创建错误报告
-        from graph.state_definitions import FinalReport, ReportContent
-        error_report = ReportContent(
-            content=None,
-            file_path=None,
-            error=str(e)
-        )
-        
-        state.final_report = FinalReport(
-            markdown=error_report,
-            excel=error_report,
-            word=error_report
-        )
-        
-        # 记录错误
-        execution_time = int((time.time() - start_time) * 1000)
-        state = update_execution_log(
-            state,
-            "report_generator",
-            "generate_final_report",
-            "error",
-            execution_time,
-            {"error": str(e)}
-        )
-        
-        return state
+        state.error_message = str(e)
+        return transition_state(state, WorkflowState.ERROR_ENCOUNTERED, str(e))
 
 
 # 完成节点
@@ -1371,11 +1346,19 @@ def _calculate_overall_validation(validation_results: Dict[str, Any]) -> Optiona
     
     scores = []
     
-    if "nesma_validation" in validation_results:
-        scores.append(validation_results["nesma_validation"].confidence_score)
+    # 安全地获取NESMA验证分数
+    nesma_validation = validation_results.get("nesma_validation")
+    if nesma_validation and hasattr(nesma_validation, 'confidence_score'):
+        confidence_score = nesma_validation.confidence_score
+        if confidence_score is not None:
+            scores.append(confidence_score)
     
-    if "cosmic_validation" in validation_results:
-        scores.append(validation_results["cosmic_validation"].confidence_score)
+    # 安全地获取COSMIC验证分数
+    cosmic_validation = validation_results.get("cosmic_validation")
+    if cosmic_validation and hasattr(cosmic_validation, 'confidence_score'):
+        confidence_score = cosmic_validation.confidence_score
+        if confidence_score is not None:
+            scores.append(confidence_score)
     
     if not scores:
         return None
